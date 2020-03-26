@@ -4,7 +4,7 @@ library(tidyverse)
 library(furrr)
 library(FNN)
 
-plan(multiprocess, workers = 24)
+plan(multiprocess, workers = 4)
 options(future.globals.maxSize= 1000*1024^2)
 
 sample_names <- c("AKK006 - healthy control", "AKK004 - old MI, fibrotic areas", 
@@ -107,11 +107,10 @@ moran_analysis <- function(sample_names, tissue_paths, matrix_paths){
     }, .progress=T)
     
     cat("Calculating Moran's I")
-    moran <- seq(2,ncol(merged)-2) %>% future_map_dbl(function(i){
+    moran <- seq(2, ncol(merged)-2) %>% future_map_dbl(function(i){
       y <- merged %>% pull(i)
       yavg <- mean(y)
       yvar <- var(y)
-      n <- nrow(merged)
       S0 <- nrow(neighborhood)
       I <-  1/(S0*yvar) *
         (seq_along(y) %>% 
@@ -135,7 +134,15 @@ moran_analysis <- function(sample_names, tissue_paths, matrix_paths){
       }))^2)
     }, .progress = T) %>% sum
     
-    D <- sum((y - yavg)^4)/sum((y - yavg)^2)^2
+    D <- seq(2,ncol(merged)-2) %>% future_map_dbl(function(i){
+      y <- merged %>% pull(i)
+      yavg <- mean(y)
+      sum((y - yavg)^4)/sum((y - yavg)^2)^2
+    }, .progress = T)
+      
+    n <- nrow(merged)
+    S0 <- nrow(neighborhood)
+    
     A <- n*((n^2 - 3*n + 3)*S1 - n*S2 + 3*S0^2)
     B <- D*((n^2 - n)*S1 - 2*n*S2 + 6*S0^2)
     C <- (n-1)*(n-2)*(n-3)*S0^2
@@ -146,11 +153,11 @@ moran_analysis <- function(sample_names, tissue_paths, matrix_paths){
     
     zI <- (moran - EI)/sqrt(VI)
     
-    pvals <- pnorm(zI)
+    pvals <- pnorm(-zI)
     adjpvals <- p.adjust(pvals, method = "fdr")
     genes <- colnames(merged)[2:(ncol(merged)-2)]
     
-    result <- data.frame(gene = genes, pvalue = pvals, adjusted_pvalue = adjpvals)
+    result <- data.frame(gene = genes, I = moran, pvalue = pvals, adjusted_pvalue = adjpvals)
     write_csv(result, path = paste0(str_split(tissue_paths[i],"/")[[1]][1],"_moran.csv"))
 
   })
