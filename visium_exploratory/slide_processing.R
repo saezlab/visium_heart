@@ -14,9 +14,62 @@ library(dplyr)
 library(purrr)
 library(viper)
 library(progeny)
-library(OmnipathR)
+#library(OmnipathR)
 source("MISTy-master/multiview.R")
 
+# General data
+
+#NABA genesets
+processNABA = function(filepath = "./markers/NABAgsets.xls") {
+  con = file(filepath, "r")
+  naba_gsets = list()
+  while ( TRUE ) {
+    line = readLines(con, n = 1)
+    if ( length(line) == 0 ) {
+      break
+    }
+    split_line = unlist(strsplit(line,split="\t"))
+    naba_gsets[[split_line[1]]] = split_line[3:length(split_line)]
+  }
+  close(con)
+  return(naba_gsets)
+}
+
+NABA = processNABA()
+names(NABA) = gsub("NABA_","",names(NABA))
+NABA_SETS = names(NABA)
+
+## Function to group Dorothea regulons. 
+## Input: A data frame containing Dorothea regulons, as stored in 
+## https://github.com/saezlab/ConservedFootprints/tree/master/data
+## Output: Object of class regulon. See viper package.
+get_ECMscores = function(seurat_obj,NABA_SETS){
+  
+  DefaultAssay(seurat_obj) = "SCT"
+  
+  for(gset in NABA_SETS){
+    features = list(gset = NABA[[gset]])
+    #ctrl_genes = sum(NABA[[gset]] %in% rownames(seurat_obj))
+    ctrl_genes = 35
+    
+    if(ctrl_genes>0){
+      seurat_obj = AddModuleScore(object = seurat_obj, 
+                                      features = features, 
+                                      name = gset, 
+                                      ctrl = ctrl_genes,
+                                      seed = 77)
+    }
+  }
+  
+  mod_ids = paste(NABA_SETS,as.character(1),sep="")
+  measured_sets = mod_ids[mod_ids %in% colnames(seurat_obj@meta.data)]
+
+  ECMmat = seurat_obj@meta.data[,measured_sets]
+  colnames(ECMmat) = gsub("1","",colnames(ECMmat))
+  
+  return(t(ECMmat))
+  
+}
 
 ## Function to group Dorothea regulons. 
 ## Input: A data frame containing Dorothea regulons, as stored in 
@@ -86,8 +139,11 @@ process_visium = function(dir_path){
   markers_mat = markers_mat[rownames(exprdata),]
   
   ct_scores = scale(t(t(markers_mat) %*% exprdata))
-  
   dat[['ctscores']] = CreateAssayObject(counts = t(ct_scores))
+  
+  ## <<ECM scores>>
+  dat[['ECM']] = CreateAssayObject(counts = get_ECMscores(seurat_obj = dat,
+                                                          NABA_SETS = NABA_SETS))
   
   return(dat)
 }
@@ -328,6 +384,52 @@ MISTy_aggregator = function(results_folder,
                      "importance" = aggregated)
   
   return(result_list)
+  
+}
+
+
+#
+#
+#
+
+GSE_analysis = function(geneList,Annotation_DB){
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  
+  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
+  
+  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
+  rownames(ResultsDF) = names(Annotation_DB)
+  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
+  
+  DB_genecontent = length(unique(unlist(Annotation_DB)))
+  
+  GenesDB = DB_genecontent 
+  SelectedGenes = length(geneList)
+  
+  for(gset in rownames(ResultsDF)){
+    GP = length(Annotation_DB[[gset]])
+    GL = length(intersect(Annotation_DB[[gset]],geneList))
+    
+    ResultsDF[gset,"GenesInList"] = GL
+    ResultsDF[gset,"GenesInPathway"] = GP
+    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
+    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
+  }
+  
+  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
+  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
+  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
+  
+  ResultsDF = ResultsDF %>% 
+    rownames_to_column("gset") %>% 
+    mutate_at(c("GenesInPathway","GenesInList",
+                "p_value","corr_p_value"), 
+                         as.numeric) %>% 
+  dplyr::arrange(corr_p_value,GenesInList)
+  
+  return(ResultsDF)
   
 }
 
