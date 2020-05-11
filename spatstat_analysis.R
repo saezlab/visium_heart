@@ -163,11 +163,31 @@ moran_analysis <- function(sample_names, tissue_paths, matrix_paths){
   })
 }
 
-spark_aggregate <- function(ids, thr){
+stat_aggregate <- function(ids, thr = 0.05, type = "spark"){
   ids %>% 
-    map(~read_csv(paste0("spark_results/", ., "_spark.csv")) %>% 
-                           filter(adjusted_pvalue <= thr) %>% pull(X1)) %>% 
+    map(~read_csv(paste0(type, "_results/", ., "_", type, ".csv")) %>% 
+                           filter(adjusted_pvalue <= thr) %>% pull(ifelse(type=="spark",X1, gene))) %>% 
     reduce(intersect)
 }
 
 #moran_analysis(sample_names, tissue_paths, matrix_paths)
+
+g <- read_csv("groups.csv")
+
+hel <- stat_aggregate(g %>% pull(Healthy), type="spark")
+bz <- stat_aggregate(g %>% pull(Borderzone), type="spark")
+mi <- stat_aggregate(g %>% pull(MI), type="spark")
+ch <- stat_aggregate(g %>% pull(Chronic), type="spark")
+common <- list(hel, bz, mi, ch) %>% reduce(intersect)
+
+result <- c("Healthy","Borderzone","MI","Chronic","Common") %>% 
+  map2_dfr(list(hel,bz,mi,ch,common),~tibble(Gene = .y, Group  = .x))
+
+result_diff <- c("Healthy","Borderzone","MI","Chronic") %>% 
+  map2_dfr(list(setdiff(hel,common),setdiff(bz,common),setdiff(mi,common),setdiff(ch,common)),~tibble(Gene = .y, Group  = .x))
+
+write_csv(result, path = "spark_results/spark_intersections.csv")
+write_csv(result_diff, path = "spark_results/spark_intersections_diff.csv")
+
+
+
