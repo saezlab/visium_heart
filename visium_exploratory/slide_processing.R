@@ -12,11 +12,11 @@ library(readr)
 library(tidyr)
 library(dplyr)
 library(purrr)
+library(stringr)
 library(viper)
 library(progeny)
-#library(OmnipathR)
-source("MISTy-master/multiview.R")
-
+library(ggplot2)
+library(MISTy)
 # General data
 
 #NABA genesets
@@ -39,10 +39,10 @@ NABA = processNABA()
 names(NABA) = gsub("NABA_","",names(NABA))
 NABA_SETS = names(NABA)
 
-## Function to group Dorothea regulons. 
-## Input: A data frame containing Dorothea regulons, as stored in 
-## https://github.com/saezlab/ConservedFootprints/tree/master/data
-## Output: Object of class regulon. See viper package.
+## Function to obtain ECM scores 
+## seurat_obj = seurat object used to obtain scores 
+## NABA_SETS = gene_sets used to obtain scores
+## Output: matrix of scores
 get_ECMscores = function(seurat_obj,NABA_SETS){
   
   DefaultAssay(seurat_obj) = "SCT"
@@ -64,6 +64,46 @@ get_ECMscores = function(seurat_obj,NABA_SETS){
   mod_ids = paste(NABA_SETS,as.character(1),sep="")
   measured_sets = mod_ids[mod_ids %in% colnames(seurat_obj@meta.data)]
 
+  ECMmat = seurat_obj@meta.data[,measured_sets]
+  colnames(ECMmat) = gsub("1","",colnames(ECMmat))
+  
+  return(t(ECMmat))
+  
+}
+
+# Immune cells data
+
+ImmuneMarkers = read.csv(file = "./markers/ImmuneCellMarker.tsv",
+                         sep = "\t", header = T,
+                         stringsAsFactors = F)
+
+ImmuneMarkers = ImmuneMarkers %>% dplyr::select("Cell.type","Gene") %>% 
+  group_by(Cell.type) %>% summarise(tmp = list(Gene)) %>%
+  deframe()
+
+names(ImmuneMarkers) = gsub(pattern = "[ /-]",replacement = "_",names(ImmuneMarkers))
+ImmuneSets = names(ImmuneMarkers)
+
+get_ImmuneScores = function(seurat_obj,ImmuneSets,ImmuneMarkers){
+  
+  DefaultAssay(seurat_obj) = "SCT"
+  ctrl_genes = min(unlist(lapply(ImmuneMarkers, length)))
+  
+  for(gset in ImmuneSets){
+    features = list(gset = ImmuneMarkers[[gset]])
+
+    if(ctrl_genes>0){
+      seurat_obj = AddModuleScore(object = seurat_obj, 
+                                  features = features, 
+                                  name = gset, 
+                                  ctrl = ctrl_genes,
+                                  seed = 77)
+    }
+  }
+  
+  mod_ids = paste(ImmuneSets,as.character(1),sep="")
+  measured_sets = mod_ids[mod_ids %in% colnames(seurat_obj@meta.data)]
+  
   ECMmat = seurat_obj@meta.data[,measured_sets]
   colnames(ECMmat) = gsub("1","",colnames(ECMmat))
   
@@ -220,6 +260,12 @@ get_optimal = function(out_dir_name,
   optimal.l = colnames(perf) %>% enframe(name = NULL, value = "target") %>% 
     mutate(l = apply(perf, 2, which.max) %>% (l^2)[.])
   
+  ## to do: save optimal results
+  
+  write.table(optimal.l,
+              file = paste0(out_dir_name,"_optim/optim_l.txt"),
+              col.names = T, row.names = F, quote = F, sep = "\t")
+  
   # Copy the relevant documents to the new directory, deleting the l parameter info
   optimal.l %>% pull(target) %>% walk2(optimal.l %>% pull(l), function(.x, .y){
     files <- list.files(paste0(out_dir_name,"_", .y, "/"), 
@@ -288,17 +334,6 @@ MISTy_aggregator = function(results_folder,
       transmute(RMSE = (intra.RMSE - multi.RMSE) / intra.RMSE, R2
                 = (multi.R2 - intra.R2))
   })
-  
-  impr_plot = ggplot(impr %>% dplyr::select(contains("RMSE")) %>%
-           mutate(target = targets) %>%
-           tidyr::pivot_longer(cols = -target, names_to = "name", values_to = "value")) +
-    geom_boxplot(aes(x = target, y = value * 100)) +
-    theme_classic() +
-    ylab("Improvement (%)") +
-    xlab("Target") +
-    ylim(c(-5, 17)) +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  
   
   avg <- ((images %>% map(function(image) {
     coefficients <- read_delim(paste0(image, .Platform$file.sep, "coefficients.txt"),
@@ -369,7 +404,8 @@ MISTy_aggregator = function(results_folder,
       # in order for aggregation
       result %>%
         arrange(Predictor) %>%
-        dplyr::select(noquote(order(colnames(result))))
+        dplyr::select((order(colnames(result))))
+      #dplyr::select(noquote(order(colnames(result))))
     })
   })
   
