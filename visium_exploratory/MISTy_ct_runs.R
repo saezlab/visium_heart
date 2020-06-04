@@ -28,6 +28,25 @@ library(MISTy)
 library(future)
 source("./visium_exploratory/slide_processing.R")
 
+scell_marker_files = list.files("./results/single_sample/all_markers")
+scell_marker_files = unlist(lapply(strsplit(scell_marker_files,"\\."), 
+                                   function(x) x[1]))
+sample_dictionary = readRDS("./sample_dictionary.rds")
+all_var_genes = readRDS(file = "./results/single_sample/all_vargenes.rds") %>% 
+  enframe(.,"id") %>% unnest()
+
+# Here I am trying to homogenize naming
+ct_scores_lt_all = lapply(readRDS(file = "results/data_integration/integrated_meta.rds"),
+                          function(x){
+                            
+                            x = x %>% rownames_to_column("spot_id") %>%
+                              dplyr::mutate(predicted.id = gsub("[.]","_",
+                                                                gsub(" ","_", predicted.id)))
+                            colnames(x) = gsub("[.]","_", colnames(x))
+                            
+                            return(x)
+                          })
+
 ## Function to get MISTy results
 ## Inputs:
 ## seurat_visium_obj: visium_slide
@@ -104,14 +123,13 @@ run_mrkr_MISTy = function(seurat_visium_obj,
 }
 
 #
-ct_scores_lt_all = readRDS(file = "results/data_integration/integrated_meta.rds")
 # Identifies IDs of spots that belong to the ct_pattern
 get_CTcoordinates = function(ct_pattern, slide, max_filter = 0){
   ct_scores = ct_scores_lt_all[[slide]]
-  ixs = grepl(ct_pattern,ct_scores$predicted.id,ignore.case = T)
+  ixs = grepl(ct_pattern,ct_scores$predicted_id,ignore.case = F)
   ct_scores = ct_scores[ixs,]
-  ixs = ct_scores$prediction.score.max >= max_filter
-  ct_ids = rownames(ct_scores)[ixs]
+  ixs = ct_scores$prediction_score_max >= max_filter
+  ct_ids = ct_scores$spot_id[ixs]
   return(ct_ids)
 }
 
@@ -236,10 +254,6 @@ plot_MISTy_gene_path = function(all_markers_ann,
                                      levels = color_df$gene)) %>%
     arrange(-Importance)
   
-  write.table(importance_para, col.names = T,
-              row.names = F,sep = ",",
-              file = gsub("pdf","csv",pdf_out))
-  
   if(ligs == TRUE){
     
     useful_predictors = importance_para %>% 
@@ -293,6 +307,10 @@ plot_MISTy_gene_path = function(all_markers_ann,
                            midpoint = 0.9) + 
       xlab("Para Pathways")
   }else{
+    
+  write.table(importance_para, col.names = T,
+                row.names = F,sep = ",",
+                file = gsub("pdf","csv",pdf_out))
   
   importance_para_plt = ggplot(importance_para,
                                aes(x = Predictor, 
@@ -329,32 +347,16 @@ plot_MISTy_gene_path = function(all_markers_ann,
 
 ###########################
 #
-# MAIN
+# MAIN FUNCTION
 #
 ###########################
 
-# Slides with current object
-slides_ids = c("157771", "157772", "157775",
-               "157777", "157779","157781",
-               "157782", "157785")
-
-slide = "157781"
-
-scell_marker_files = list.files("./results/single_sample/all_markers")
-scell_marker_files = unlist(lapply(strsplit(scell_marker_files,"\\."), 
-                                   function(x) x[1]))
-
-sample_dictionary = readRDS("./sample_dictionary.rds")
-
-all_var_genes = readRDS(file = "./results/single_sample/all_vargenes.rds") %>% 
-  enframe(.,"id") %>% unnest()
-
 # CT-CT MISTy
-for(slide in slides_ids){
+MISTy_marker_pipeline = function(slide, ct_pattern){
   
   print(slide)
+  print(ct_pattern)
   
-  ct_pattern = "fibroblast"
   #Defining out files
   
   slide_file = sprintf("./results/single_slide/%s/%s.rds",
@@ -387,22 +389,24 @@ for(slide in slides_ids){
   
   if(scell_id %in% scell_marker_files){
     
+    #Reading genesorter markers
     scell_markers = read.table(file = sprintf("./results/single_sample/top50/%s.top50.genes.txt",
                                               scell_id),
                                header = T, sep = "\t",
                                stringsAsFactors = F) %>%
-      tidyr::pivot_longer(cols=colnames(.),"cluster",values_to = "gene")
+      tidyr::pivot_longer(cols=colnames(.),"cluster",values_to = "gene") %>%
+      dplyr::mutate(cluster = gsub("[.]","_",cluster))
     
     
-    # Here create score matrix
-    # scell_markers = read.table(file = sprintf("./results/single_sample/all_markers/%s.AllMarkers.txt",
-    #                                           scell_id),
-    #                            header = T, sep = "\t",
-    #                            stringsAsFactors = F) %>%
-    #   dplyr::mutate(cluster = gsub(" ","_",cluster)) %>%
-    #   dplyr::mutate(cluster = gsub("\\+","pos",cluster)) %>%
-    #   group_by(cluster) %>% arrange(p_val_adj) %>%
-    #   dplyr::slice(1:200) %>% dplyr::filter(!grepl("-",gene))
+    # # Here create score matrix
+    #  scell_markers = read.table(file = sprintf("./results/single_sample/all_markers/%s.AllMarkers.txt",
+    #                                            scell_id),
+    #                             header = T, sep = "\t",
+    #                             stringsAsFactors = F) %>%
+    #    dplyr::mutate(cluster = gsub(" ","_",cluster)) %>%
+    #    dplyr::mutate(cluster = gsub("\\+","pos",cluster)) %>%
+    #    group_by(cluster) %>% arrange(p_val_adj) %>%
+    #    dplyr::slice(1:200) %>% dplyr::filter(!grepl("-",gene))
     
     # Filter by most variable genes in the specific slide
     spec_vargns = all_var_genes %>% dplyr::filter(id == scell_id) %>%
@@ -414,7 +418,7 @@ for(slide in slides_ids){
     available_cts = unique(scell_markers$cluster)
     
     useful_cts = available_cts[grepl(pattern = ct_pattern, available_cts,
-                       ignore.case = T)]
+                       ignore.case = F)]
     
     scell_markers = dplyr::filter(scell_markers, cluster %in% useful_cts)
     
@@ -434,30 +438,31 @@ for(slide in slides_ids){
     #Here define interesting spots: This must change
     
     spot_ids = get_CTcoordinates(ct_pattern = ct_pattern,
-                                 slide = slide, max_filter = 0.1)
+                                 slide = slide, 
+                                 max_filter = 0.1)
     
     ct_scores = ct_scores_lt_all[[slide]]
     
     # Cells with less than .1 score for all cell-types associated with pattern
-    pattern_ix_cols = grepl(ct_pattern, colnames(ct_scores),ignore.case = T)
+    pattern_ix_cols = grepl(ct_pattern, colnames(ct_scores),ignore.case = F)
     not_pattern_ids = rowSums(ct_scores[,pattern_ix_cols,drop=F] < .1) == length(useful_cts)
-    not_pattern_ids = names(not_pattern_ids[not_pattern_ids])
+    not_pattern_ids = ct_scores$spot_id[not_pattern_ids]
     
     # Here we identify cells that have a chance of being the pattern cell
-    ct_scores_mod = ct_scores %>% rownames_to_column("cell_ID") %>%
-      mutate(predicted.id = ifelse(grepl(ct_pattern,
-                                         predicted.id,
-                                         ignore.case = T) &
-                                   prediction.score.max >= 0.1,
-                                   predicted.id, "border"))
+    ct_scores_mod = ct_scores %>%
+      mutate(predicted_id = ifelse(grepl(ct_pattern,
+                                         predicted_id,
+                                         ignore.case = F) &
+                                   prediction_score_max >= 0.1,
+                                   predicted_id, "border"))
     
     # Here we take the border definition
     ct_scores_mod = ct_scores_mod %>% 
-      mutate(predicted.id = ifelse(cell_ID %in% not_pattern_ids,
-                                   paste0("not_",ct_pattern), predicted.id))
+      mutate(predicted.id = ifelse(spot_id %in% not_pattern_ids,
+                                   paste0("not_",ct_pattern), predicted_id))
     
     
-    ct_scores_label = setNames(ct_scores_mod$predicted.id,ct_scores_mod$cell_ID)
+    ct_scores_label = setNames(ct_scores_mod$predicted.id,ct_scores_mod$spot_id)
     
     visium_slide = AddMetaData(visium_slide,
                 metadata = ct_scores_label[colnames(visium_slide)],col.name = "spot_label")
@@ -469,7 +474,7 @@ for(slide in slides_ids){
                    label.size = 0,stroke = 0,label.box = F) +
       scale_fill_manual(values = sample(RColorBrewer::brewer.pal(n = 8,"Accent"),n_sample))
     
-    pdf(file = QC_out, width = 9, height = 9,onefile = TRUE,)
+    pdf(file = QC_out, width = 12, height = 12,onefile = TRUE)
     
     print(cells_analysed)
     
@@ -485,7 +490,7 @@ for(slide in slides_ids){
     # Coverage filter controlled by min proportion
     
     coverage_min = min(table(ct_scores_label[spot_ids])/ length(ct_scores_label[spot_ids]))
-    
+    coverage_min = coverage_min - (.5 * coverage_min)
     spot_coverage = names(spot_coverage[spot_coverage>=coverage_min])
     
     # Useful markers?
@@ -531,16 +536,16 @@ for(slide in slides_ids){
                      out_dir_name = misty_out)
     
     #Getting optimal
-    get_optimal(out_dir_name = misty_out,ls = ls)
-    MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out,"_optim"))
-    
-    performance_file = paste0(misty_out,"_optim/performance.txt")
-    
-    plot_MISTy_gene_path(all_markers_ann = all_markers_ann,
-                         MISTy_out = MISTy_out,
-                         pdf_out = pdf_out,
-                         ligs = F,
-                         performance = read_delim(performance_file, delim = " "))
+    # get_optimal(out_dir_name = misty_out,ls = ls)
+    # MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out,"_optim"))
+    # 
+    # performance_file = paste0(misty_out,"_optim/performance.txt")
+    # 
+    # plot_MISTy_gene_path(all_markers_ann = all_markers_ann,
+    #                      MISTy_out = MISTy_out,
+    #                      pdf_out = pdf_out,
+    #                      ligs = F,
+    #                      performance = read_delim(performance_file, delim = " "))
     
     clear_cache()
     
@@ -554,6 +559,165 @@ for(slide in slides_ids){
                      out_dir_name = misty_out_ligs)
     
     #Getting optimal
+    # get_optimal(out_dir_name = misty_out_ligs,ls = ls)
+    # MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out_ligs,"_optim"))
+    # 
+    # performance_file = paste0(misty_out_ligs,"_optim/performance.txt")
+    # 
+    # plot_MISTy_gene_path(all_markers_ann = all_markers_ann,
+    #                      MISTy_out = MISTy_out,
+    #                      pdf_out = pdf_out_ligs,
+    #                      ligs = T,
+    #                      performance = read_delim(performance_file, delim = " "))
+    # 
+
+  }
+}
+
+
+
+MISTy_marker_pipeline_down = function(slide, ct_pattern){
+  
+  print(slide)
+  print(ct_pattern)
+  ls = c(2,5,10,20,50,100)
+  
+  #Defining out files
+  slide_file = sprintf("./results/single_slide/%s/%s.rds",
+                       slide,slide)
+  
+  misty_out = sprintf("./results/single_slide/%s/misty/%s_mrun_mrkr_path_%s",
+                      slide,slide,ct_pattern)
+  
+  misty_out_ligs = sprintf("./results/single_slide/%s/misty/%s_mrun_mrkr_ligs_%s",
+                           slide,slide,ct_pattern)
+  
+  pdf_out = sprintf("./results/single_slide/%s/misty/%s_mrun_mrkr_path_%s.pdf",
+                    slide,slide,ct_pattern)
+  
+  pdf_out_ligs = sprintf("./results/single_slide/%s/misty/%s_mrun_mrkr_ligs_%s.pdf",
+                         slide,slide,ct_pattern)
+  
+  #Cell type scores from specific scRNA if data available
+  scell_id = dplyr::filter(sample_dictionary, visium_ids == slide) %>%
+    dplyr::select(scell_ids) %>% pull()
+  
+  visium_slide = readRDS(slide_file)
+  
+  if(scell_id %in% scell_marker_files){
+    
+    #Reading genesorter markers
+    scell_markers = read.table(file = sprintf("./results/single_sample/top50/%s.top50.genes.txt",
+                                              scell_id),
+                               header = T, sep = "\t",
+                               stringsAsFactors = F) %>%
+      tidyr::pivot_longer(cols=colnames(.),"cluster",values_to = "gene") %>%
+      dplyr::mutate(cluster = gsub("[.]","_",cluster))
+    
+    # Filter by most variable genes in the specific slide
+    spec_vargns = all_var_genes %>% dplyr::filter(id == scell_id) %>%
+      dplyr::select(value) %>% pull()
+    
+    scell_markers = dplyr::filter(scell_markers, gene %in% spec_vargns)
+    
+    # Continue processing of markers
+    available_cts = unique(scell_markers$cluster)
+    
+    useful_cts = available_cts[grepl(pattern = ct_pattern, available_cts,
+                                     ignore.case = F)]
+    
+    scell_markers = dplyr::filter(scell_markers, cluster %in% useful_cts)
+    
+    gene_markers = scell_markers$gene
+    gene_markers_counts = table(gene_markers)
+    
+    #First get shared markers
+    shared_markers = names(gene_markers_counts)[gene_markers_counts == length(useful_cts)]
+    
+    #Then unique markers
+    scell_markers_unq = scell_markers %>%
+      dplyr::filter(!gene %in% scell_markers$gene[duplicated(scell_markers$gene) == T]) %>%
+      dplyr::slice(1:100) 
+    
+    unique_markers = scell_markers_unq %>% dplyr::select(gene) %>% pull()
+    
+    #Here define interesting spots: This must change
+    
+    spot_ids = get_CTcoordinates(ct_pattern = ct_pattern,
+                                 slide = slide, 
+                                 max_filter = 0.1)
+    
+    spot_ids = get_CTcoordinates(ct_pattern = ct_pattern,
+                                 slide = slide, 
+                                 max_filter = 0.1)
+    
+    ct_scores = ct_scores_lt_all[[slide]]
+    
+    # Cells with less than .1 score for all cell-types associated with pattern
+    pattern_ix_cols = grepl(ct_pattern, colnames(ct_scores),ignore.case = F)
+    not_pattern_ids = rowSums(ct_scores[,pattern_ix_cols,drop=F] < .1) == length(useful_cts)
+    not_pattern_ids = ct_scores$spot_id[not_pattern_ids]
+    
+    # Here we identify cells that have a chance of being the pattern cell
+    ct_scores_mod = ct_scores %>%
+      mutate(predicted_id = ifelse(grepl(ct_pattern,
+                                         predicted_id,
+                                         ignore.case = F) &
+                                     prediction_score_max >= 0.1,
+                                   predicted_id, "border"))
+    
+    # Here we take the border definition
+    ct_scores_mod = ct_scores_mod %>% 
+      mutate(predicted.id = ifelse(spot_id %in% not_pattern_ids,
+                                   paste0("not_",ct_pattern), predicted_id))
+    
+    
+    ct_scores_label = setNames(ct_scores_mod$predicted.id,ct_scores_mod$spot_id)
+    
+    # Slide coverage: This is to avoid dealing with sparsity in MISTy
+    all_markers_init = c(shared_markers, unique_markers)
+    
+    slide_gex = visium_slide@assays$SCT@data
+    
+    slide_gex = as.matrix(slide_gex[all_markers_init[all_markers_init %in% rownames(slide_gex)],spot_ids])
+    
+    spot_coverage = rowSums(slide_gex > 0)/ncol(slide_gex)
+    
+    # Coverage filter controlled by min proportion
+    
+    coverage_min = min(table(ct_scores_label[spot_ids])/ length(ct_scores_label[spot_ids]))
+    coverage_min = coverage_min - (.5 * coverage_min)
+    spot_coverage = names(spot_coverage[spot_coverage>=coverage_min])
+    
+    # Useful markers?
+    shared_markers = shared_markers[shared_markers %in% spot_coverage]
+    unique_markers = unique_markers[unique_markers %in% spot_coverage]
+    
+    #Merge them and make annotations
+    all_markers = c(shared_markers, unique_markers)
+    all_markers = all_markers[!grepl("-",all_markers)]
+    all_markers_ann =  scell_markers %>%
+      dplyr::filter(gene %in% all_markers) %>%
+      mutate(shared = ifelse(gene %in% shared_markers,T,F)) %>%
+      ungroup() %>% arrange(desc(shared),cluster) %>%
+      dplyr::select(gene,cluster,shared)
+    
+    #pathways
+    #Getting optimal
+    get_optimal(out_dir_name = misty_out,ls = ls)
+    MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out,"_optim"))
+    
+    performance_file = paste0(misty_out,"_optim/performance.txt")
+    
+    plot_MISTy_gene_path(all_markers_ann = all_markers_ann,
+                         MISTy_out = MISTy_out,
+                         pdf_out = pdf_out,
+                         ligs = F,
+                         performance = read_delim(performance_file, delim = " "))
+    
+    
+    #ligands
+    #Getting optimal
     get_optimal(out_dir_name = misty_out_ligs,ls = ls)
     MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out_ligs,"_optim"))
     
@@ -565,8 +729,449 @@ for(slide in slides_ids){
                          ligs = T,
                          performance = read_delim(performance_file, delim = " "))
     
-
   }
+}
+
+
+
+# CT-CT MISTy
+MISTy_hpredictors_pipeline = function(slide, ct_pattern){
+  
+  print(slide)
+  print(ct_pattern)
+  
+  #Defining out files
+  
+  slide_file = sprintf("./results/single_slide/%s/%s.rds",
+                       slide,slide)
+  
+  misty_out_ligs = sprintf("./results/single_slide/%s/misty/%s_hpredictors_%s",
+                           slide,slide,ct_pattern)
+  
+  QC_out = sprintf("./results/single_slide/%s/misty/%s_%s_qc.pdf",
+                   slide,slide,ct_pattern)
+  
+  all_markers_out = sprintf("./results/single_slide/%s/misty/%s_allmarkers_%s.rds",
+                    slide,slide,ct_pattern)
+  
+  # General parameters
+  hpredictors = c(readRDS("./markers/heart_predictors.rds"),c("NPPA","NPPB","CCR2"))
+  visium_slide = readRDS(slide_file)
+  
+  ls = c(2,5,10,20,50,100)
+  
+  #Cell type scores from specific scRNA if data available
+  scell_id = dplyr::filter(sample_dictionary, visium_ids == slide) %>%
+    dplyr::select(scell_ids) %>% pull()
+  
+  if(scell_id %in% scell_marker_files){
+    
+    #Reading genesorter markers
+    scell_markers = read.table(file = sprintf("./results/single_sample/top50/%s.top50.genes.txt",
+                                              scell_id),
+                               header = T, sep = "\t",
+                               stringsAsFactors = F) %>%
+      tidyr::pivot_longer(cols=colnames(.),"cluster",values_to = "gene") %>%
+      dplyr::mutate(cluster = gsub("[.]","_",cluster))
+    
+    # Filter by most variable genes in the specific slide
+    spec_vargns = all_var_genes %>% dplyr::filter(id == scell_id) %>%
+      dplyr::select(value) %>% pull()
+    
+    scell_markers = dplyr::filter(scell_markers, gene %in% spec_vargns)
+    
+    # Continue processing of markers
+    available_cts = unique(scell_markers$cluster)
+    
+    useful_cts = available_cts[grepl(pattern = ct_pattern, available_cts,
+                                     ignore.case = F)]
+    
+    scell_markers = dplyr::filter(scell_markers, cluster %in% useful_cts)
+    
+    gene_markers = scell_markers$gene
+    gene_markers_counts = table(gene_markers)
+    
+    #First get shared markers
+    shared_markers = names(gene_markers_counts)[gene_markers_counts == length(useful_cts)]
+    
+    #Then unique markers
+    scell_markers_unq = scell_markers %>%
+      dplyr::filter(!gene %in% scell_markers$gene[duplicated(scell_markers$gene) == T]) %>%
+      dplyr::slice(1:100) 
+    
+    unique_markers = scell_markers_unq %>% dplyr::select(gene) %>% pull()
+    
+    #Here define interesting spots: This must change
+    
+    spot_ids = get_CTcoordinates(ct_pattern = ct_pattern,
+                                 slide = slide, 
+                                 max_filter = 0.1)
+    
+    ct_scores = ct_scores_lt_all[[slide]]
+    
+    # Cells with less than .1 score for all cell-types associated with pattern
+    pattern_ix_cols = grepl(ct_pattern, colnames(ct_scores),ignore.case = F)
+    not_pattern_ids = rowSums(ct_scores[,pattern_ix_cols,drop=F] < .1) == length(useful_cts)
+    not_pattern_ids = ct_scores$spot_id[not_pattern_ids]
+    
+    # Here we identify cells that have a chance of being the pattern cell
+    ct_scores_mod = ct_scores %>%
+      mutate(predicted_id = ifelse(grepl(ct_pattern,
+                                         predicted_id,
+                                         ignore.case = F) &
+                                     prediction_score_max >= 0.1,
+                                   predicted_id, "border"))
+    
+    # Here we take the border definition
+    ct_scores_mod = ct_scores_mod %>% 
+      mutate(predicted.id = ifelse(spot_id %in% not_pattern_ids,
+                                   paste0("not_",ct_pattern), predicted_id))
+    
+    
+    ct_scores_label = setNames(ct_scores_mod$predicted.id,ct_scores_mod$spot_id)
+    
+    visium_slide = AddMetaData(visium_slide,
+                               metadata = ct_scores_label[colnames(visium_slide)],col.name = "spot_label")
+    
+    Idents(visium_slide) = "spot_label"
+    n_sample = length(unique(Idents(visium_slide)))
+    set.seed(3)
+    cells_analysed = SpatialDimPlot(visium_slide, label = TRUE, 
+                                    label.size = 0,stroke = 0,label.box = F) +
+      scale_fill_manual(values = sample(RColorBrewer::brewer.pal(n = 8,"Accent"),n_sample))
+    
+    pdf(file = QC_out, width = 12, height = 12,onefile = TRUE)
+    
+    print(cells_analysed)
+    
+    # Slide coverage: This is to avoid dealing with sparsity in MISTy
+    all_markers_init = c(shared_markers, unique_markers)
+    
+    slide_gex = visium_slide@assays$SCT@data
+    
+    slide_gex = as.matrix(slide_gex[all_markers_init[all_markers_init %in% rownames(slide_gex)],spot_ids])
+    
+    spot_coverage = rowSums(slide_gex > 0)/ncol(slide_gex)
+    
+    # Coverage filter controlled by min proportion
+    
+    coverage_min = min(table(ct_scores_label[spot_ids])/ length(ct_scores_label[spot_ids]))
+    coverage_min = coverage_min - (.5 * coverage_min)
+    spot_coverage = names(spot_coverage[spot_coverage>=coverage_min])
+    
+    # Useful markers?
+    shared_markers = shared_markers[shared_markers %in% spot_coverage]
+    unique_markers = unique_markers[unique_markers %in% spot_coverage]
+    
+    #Merge them and make annotations
+    all_markers = c(shared_markers, unique_markers)
+    all_markers = all_markers[!grepl("-",all_markers)]
+    all_markers_ann =  scell_markers %>%
+      dplyr::filter(gene %in% all_markers) %>%
+      mutate(shared = ifelse(gene %in% shared_markers,T,F)) %>%
+      ungroup() %>% arrange(desc(shared),cluster) %>%
+      dplyr::select(gene,cluster,shared)
+    
+    saveRDS(all_markers_ann,file = all_markers_out)
+    
+    dotqc = Seurat::DotPlot(object = visium_slide,features = unique(all_markers_ann$gene),assay = "SCT") +
+      coord_flip() + theme(axis.text.x = element_text(angle = 90,vjust=0.5,hjust=1))
+    
+    plot(dotqc)
+    
+    dev.off()
+    
+    #Which ligands?
+    slide_gex = visium_slide@assays$SCT@data
+    slide_gex = as.matrix(slide_gex[hpredictors[hpredictors %in% rownames(slide_gex)],])
+    predictor_coverage = rowSums(slide_gex > 0)/ncol(slide_gex)
+    
+    ligands = names(predictor_coverage[predictor_coverage>0.1])
+    
+    #Running MISTy
+    
+    #pathways
+    ls = c(2,5,10,20,50,100)
+    
+    clear_cache()
+    
+    test_A1 = lapply(ls, run_mrkr_MISTy, 
+                     seurat_visium_obj = visium_slide,
+                     spot_ids = spot_ids,
+                     intrinsic_markers = unique(all_markers),
+                     ligands = unique(ligands),
+                     pathways = NULL,
+                     out_dir_name = misty_out_ligs)
+    
+  }
+}
+
+#
+#
+#
+MISTy_marker_pipeline_down_v2 = function(slide, ct_pattern){
+  
+  print(slide)
+  print(ct_pattern)
+  
+  #Defining out files
+  slide_file = sprintf("./results/single_slide/%s/%s.rds",
+                       slide,slide)
+  
+  all_markers_out = sprintf("./results/single_slide/%s/misty/%s_allmarkers_%s.rds",
+                            slide,slide,ct_pattern)
+  
+  misty_out = sprintf("./results/single_slide/%s/misty/%s_hpredictors_%s",
+                      slide,slide,ct_pattern)
+  
+  pdf_out = sprintf("./results/single_slide/%s/misty/%s_hpredictors_summary_%s.pdf",
+                    slide,slide,ct_pattern)
+  
+  
+  visium_slide = readRDS(slide_file)
+  
+  all_markers_ann = readRDS(all_markers_out)
+  
+  #Genes to perform differential expression analysis
+  predicted_markers = unique(all_markers_ann$gene)
+  
+  #Prepare visium object
+  ct_scores = ct_scores_lt_all[[slide]]
+  
+  # Cells with less than .1 score for all cell-types associated with pattern
+  pattern_ix_cols = grepl(ct_pattern, colnames(ct_scores),ignore.case = F)
+  
+  useful_cts = gsub("prediction_score_","",colnames(ct_scores)[pattern_ix_cols])
+  not_pattern_ids = rowSums(ct_scores[,pattern_ix_cols,drop=F] < .1) == length(useful_cts)
+  not_pattern_ids = ct_scores$spot_id[not_pattern_ids]
+  
+  # Here we identify cells that have a chance of being the pattern cell
+  ct_scores_mod = ct_scores %>%
+    mutate(predicted_id = ifelse(grepl(ct_pattern,
+                                       predicted_id,
+                                       ignore.case = F) &
+                                   prediction_score_max >= 0.1,
+                                 predicted_id, "border"))
+  
+  # Here we take the border definition
+  ct_scores_mod = ct_scores_mod %>% 
+    mutate(predicted.id = ifelse(spot_id %in% not_pattern_ids,
+                                 paste0("not_",ct_pattern), predicted_id))
+  
+  
+  ct_scores_label = setNames(ct_scores_mod$predicted.id,ct_scores_mod$spot_id)
+  
+  visium_slide = AddMetaData(visium_slide,
+                             metadata = ct_scores_label[colnames(visium_slide)],col.name = "spot_label")
+  
+  Idents(visium_slide) = "spot_label"
+  
+  # New annotation
+  spec_markrs = FindAllMarkers(object = visium_slide,test.use = "wilcox",
+                               features = predicted_markers,logfc.threshold = 0.05,only.pos = T)
+  
+  spec_markrs = spec_markrs %>% dplyr::filter(p_val_adj < 0.05) %>%
+    dplyr::arrange(cluster,-avg_logFC) %>%
+    dplyr::select(cluster, gene) 
+  
+  shared_expression = table(spec_markrs$gene)
+  
+  shared_genes = names(shared_expression[shared_expression>1])
+  
+  spec_markrs = spec_markrs %>%
+    dplyr::mutate(ct = as.character(cluster)) %>%
+    dplyr::mutate(ct = ifelse(gene %in% shared_genes,
+                              "shared",ct)) %>%
+    dplyr::select(ct,gene) %>% unique()
+  
+  # Getting optim results
+  
+  MISTy_out = MISTy_aggregator(results_folder = paste0(misty_out,"_optim"))
+  
+  # Plotting essential
+  
+  # First colors and order
+  set.seed(117)
+  
+  color_df = unique(spec_markrs$ct)
+  color_v = sample((RColorBrewer::brewer.pal(n = 8,
+                                             "Dark2")), length(color_df))
+  color_df = tibble(ct = color_df, ccolor = color_v)
+  color_df = left_join(spec_markrs, color_df) %>% arrange(ct)
+  
+  marker_plt = ggplot(color_df, aes(x = factor(gene,
+                                               levels = gene),
+                                    y = ct,
+                                    fill = ct)) +
+    geom_tile() + theme_minimal() + 
+    theme(
+      axis.title = element_text(size=11),
+      axis.text.x = element_text(angle = 90,
+                                 hjust = 1,
+                                 vjust = 0.5))
+  
+  # Overall performance
+  performance = read_delim(paste0(misty_out,"_optim/performance.txt"), 
+                           delim = " ")
+  
+  performance_plt = performance %>% tidyr::pivot_longer(cols = -target) %>%
+    dplyr::filter(grepl("R2",name)) %>%
+    dplyr::filter(target %in% color_df$gene) %>%
+    dplyr::mutate(target = factor(target,
+                                  levels = color_df$gene)) %>%
+    ggplot(aes(fill = name, y = target, x = value)) +
+    geom_bar(stat = "identity",position="dodge") + 
+    theme_minimal() +
+    theme(axis.text.y = element_text(color = color_df$ccolor))
+  
+  R2_impr = MISTy_out$impr %>% dplyr::select(contains("R2")) %>%
+    mutate(target = targets) %>%
+    dplyr::filter(target %in% color_df$gene) %>%
+    pivot_longer(cols = -target, 
+                 names_to = "name", 
+                 values_to = "value") %>% arrange(desc(value)) %>%
+    mutate(target = factor(target,
+                           levels = color_df$gene))
+  
+  impr_plot = ggplot(R2_impr) +
+    geom_point(aes(x = target, y = value * 100)) +
+    theme_classic() +
+    ylab("Change in variance explained") +
+    xlab("Target") +
+    #ylim(c(-5, 25)) +
+    theme(axis.title = element_text(size=11),
+          axis.text = element_text(size=10),
+          axis.text.x = element_text(angle = 90, hjust = 1,
+                                     color = color_df$ccolor))
+  
+  #Look at importances of views
+  contribution_df = MISTy_out$coefs %>% dplyr::filter(target %in% R2_impr$target) %>%
+    dplyr::filter(target %in% color_df$gene)
+  
+  coefs_plot = ggplot(contribution_df) + 
+    geom_col(aes(x=factor(target, levels = color_df$gene), 
+                 y=value, group=view, fill=view)) +
+    xlab("Target") +
+    ylab("Contribution") +
+    theme_classic() +
+    theme(axis.text = element_text(size=13),
+          axis.title = element_text(size=13),
+          legend.text = element_text(size=11)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1,
+                                     vjust = 0.5,
+                                     color = color_df$ccolor)) +
+    scale_fill_brewer(palette="Dark2",
+                      labels = c("Intrinsic","Para pathway")) +
+    labs(fill = "View")
+  
+  
+  #Intra
+  importance_intra = tidyr::gather(MISTy_out$importance[[1]], "Predicted",
+                                   "Importance", -Predictor) %>%
+    left_join(all_markers_ann, by = c("Predicted"="gene")) %>%
+    mutate(PredictedCell = cluster) %>% 
+    select(Predictor,Predicted,
+           Importance,PredictedCell) %>%
+    left_join(all_markers_ann, by = c("Predictor"="gene")) %>%
+    mutate(PredictorCell = cluster) %>% 
+    select(Predictor,Predicted,Importance,
+           PredictorCell,
+           PredictedCell) %>%
+    arrange(PredictedCell,PredictorCell,Predicted,Predictor) %>%
+    dplyr::filter(Predicted %in% color_df$gene)
+  
+  importance_intra = importance_intra %>%
+    mutate(Predicted = factor(Predicted,
+                              levels = color_df$gene))
+  
+  importance_intra_plt = ggplot(importance_intra,
+                                aes(x = Predictor, 
+                                    y = Predicted, 
+                                    fill = Importance)) + geom_tile() + 
+    theme(panel.grid = element_blank(),
+          axis.title = element_text(size=11),
+          axis.text.x = element_text(angle = 90,
+                                     hjust = 1,
+                                     vjust = 0.5),
+          axis.text.y = element_text(color = color_df$ccolor),
+          axis.text = element_text(size=10),
+          legend.key.size = unit(.6, "cm"),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 10),
+          legend.position = "bottom") +
+    scale_fill_gradient2(low = "white", 
+                         mid = "white", 
+                         high = scales::muted("blue"),
+                         midpoint = 0.9) +
+    xlab("Intrinsic pathways")
+  
+  #Para
+  
+  importance_para = tidyr::gather(MISTy_out$importance[[2]], "Predicted",
+                                  "Importance", -Predictor) %>%
+    dplyr::filter(Predicted %in% color_df$gene) %>%
+    arrange(-Importance) %>%
+    left_join(color_df,by = c("Predicted" = "gene"))
+  
+  # Identify top n predictors of all markers
+  
+  best_predictors = importance_para %>% group_by(ct,Predictor) %>%
+    summarise(mean_importance = mean(Importance)) %>%
+    ungroup() %>%
+    arrange(ct,-mean_importance) %>%
+    dplyr::filter(mean_importance>1) %>%
+    unique()
+  
+  bp_plt = ggplot(best_predictors, aes(x = factor(Predictor,
+                                                  levels = unique(Predictor)),
+                                       y = ct,
+                                       fill = mean_importance)) +
+    geom_tile() + theme_minimal() + 
+    theme(
+      axis.title = element_text(size=11),
+      axis.text.x = element_text(angle = 90,
+                                 hjust = 1,
+                                 vjust = 0.5))
+  
+  importance_para = importance_para %>%
+    dplyr::filter(Predictor %in%
+                    best_predictors$Predictor) %>%
+    dplyr::mutate(Predictor = factor(Predictor,
+                                     levels = unique(best_predictors$Predictor)),
+                  Predicted = factor(Predicted,
+                                     levels = color_df$gene))
+  
+  importance_para_plt = ggplot(importance_para,
+                               aes(x = Predictor, 
+                                   y = Predicted, 
+                                   fill = Importance)) + geom_tile() + 
+    theme(panel.grid = element_blank(),
+          axis.title = element_text(size=11),
+          axis.text.x = element_text(angle = 90,
+                                     hjust = 1,
+                                     vjust = 0.5),
+          axis.text.y = element_text(color = color_df$ccolor),
+          axis.text = element_text(size=10),
+          legend.key.size = unit(.6, "cm"),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 10),
+          legend.position = "bottom") +
+    scale_fill_gradient2(low = "white", 
+                         mid = "white", 
+                         high = scales::muted("blue"),
+                         midpoint = 0.9) + 
+    xlab("Para ligands")
+  
+  
+  pdf(file = pdf_out, width = 15, height = 9,onefile = TRUE)
+  plot(marker_plt)
+  plot(performance_plt)
+  plot(impr_plot)
+  plot(coefs_plot)
+  plot(importance_intra_plt)
+  plot(bp_plt)
+  plot(importance_para_plt)
+  dev.off()
   
 }
 
