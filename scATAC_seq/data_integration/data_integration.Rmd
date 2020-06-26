@@ -1,0 +1,350 @@
+---
+title: "Batch correction"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(Seurat)
+library(stringr)
+library(magrittr)
+library(readr)
+library(Matrix)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(Signac)
+library(Seurat)
+library(cluster)
+library(mclust)
+library(cowplot)
+library(gridExtra)
+library(clustree)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(EnsDb.Hsapiens.v86)
+library(ComplexHeatmap)
+```
+
+## Load the aggreated data and statistics for each sample
+
+```{r loaddata, echo=FALSE}
+# peak-barcode count matrix
+heart <- readRDS("../data/heart.Rds")
+
+cols.use <- c("AKK006_Healthy" = "#e41a1c",
+              "AKK001_No2" = "#377eb8",
+              "AKK002_BorderZone" = "#4daf4a",
+              "AKK002_Infarct" = "#984ea3",
+              "AKK004_wo" = "#ff7f00",
+              "AKK003_BorderZone" = "#ffff33",
+              "AKK002_Healthy" = "#a65628",
+              "AKK003_No9" = "#f781bf")
+
+cols.celltypes = c('Cardiomyocytes' = '#800000',
+'Cardiomyocytes 1' = '#800000',
+'Cardiomyocytes 2' = '#9A6324',
+'Cardiomyocytes 3' = '#808000',
+'Fibroblasts 1' = '#911eb4',
+'Fibroblasts 2' = '#e6beff',
+'Fibroblasts 3' = '#f032e6',
+'Fibroblasts 4' = '#f032e6',
+'Fibroblasts 5' = '#f032e6',
+'Fibroblasts 0' = '#f032e6',
+'Endothelial cells 1' = '#000075',
+'Endothelial cells 2' = 'blue',
+'Endothelial cells 3' = '#568198',
+'Endothelial cells 4' = '#469990',
+'Endothelial cells 5' = '#469990',
+'Endothelial cells 6' = '#469990',
+'Macrophages' = '#e6194B',
+'Macrophages 1' = '#e6194B',
+'Macrophages 2' = '#fabebe',
+'Pericytes' = '#f58231',
+'T cells' = '#ffe119',
+'Lymphatic endothelial cells' = '#ffd8b1',
+'Adipocytes' = '#000000',
+'Neuronal cells' = '#42d4f4',
+'Erythrocytes' = '#999999',
+'Endothelial cells (damaged)' = '#999999',
+'Vascular smooth muscle cells' = '#aaffc3')
+
+```
+
+## Dimensionality reduction of unintegrated data
+```{r, echo=FALSE, warning=-1, fig.height=8, fig.width=10}
+heart <- NormalizeData(heart, normalization.method = "LogNormalize")
+heart <- FindVariableFeatures(heart, nfeatures = 5000)
+heart <- ScaleData(heart, features = VariableFeatures(heart))
+heart <- RunPCA(heart, npcs = 30, verbose = FALSE, 
+                features = VariableFeatures(heart))
+
+heart <- RunUMAP(heart, 
+                 reduction = "pca", 
+                 reduction.name = "umap_pca", 
+                 dims = 1:30,
+                 min.dist = 0.1)
+
+DimPlot(heart, reduction = "umap_pca", pt.size = 0.1, 
+        group.by = "spatial.ident", cols = cols.use)
+```
+
+## We now check the distribution of each feature again based on UAMP + PCA
+
+```{r qc, echo=FALSE, fig.height=6, fig.width=12}
+p1 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "TSS_fragments_log", pt.size = 0.1)
+p2 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "DNase_sensitive_region_fragments_log", pt.size = 0.1)
+p3 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "enhancer_region_fragments_log", pt.size = 0.1)
+p4 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "promoter_region_fragments_log", pt.size = 0.1)
+p5 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "on_target_fragments_log", pt.size = 0.1)
+p6 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "blacklist_region_fragments_log", pt.size = 0.1)
+p7 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "peak_region_fragments_log", pt.size = 0.1)
+p8 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "peak_region_cutsites_log", pt.size = 0.1)
+p9 <- FeaturePlot(heart, reduction = "umap_pca", 
+                  features = "passed_filters_log", pt.size = 0.1)
+p10 <- FeaturePlot(heart, reduction = "umap_pca", 
+                   features = "duplicate_log", pt.size = 0.1)
+p11 <- FeaturePlot(heart, reduction = "umap_pca", 
+                   features = "pct_reads_in_peaks", pt.size = 0.1)
+p12 <- FeaturePlot(heart, reduction = "umap_pca", 
+                   features = "pct_reads_in_promoters", pt.size = 0.1)
+p13 <- FeaturePlot(heart, reduction = "umap_pca", 
+                   features = "blacklist_ratio", pt.size = 0.1)
+p14 <- FeaturePlot(heart, reduction = "umap_pca", 
+                   features = "nucleosome_signal", pt.size = 0.1)
+
+CombinePlots(plots = list(p1, p2), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p3, p4), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p5, p6), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p7, p8), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p9, p10), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p11, p12), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p13, p14), ncol = 2, legend = 'none')
+```
+
+
+## visualize per sample
+```{r, echo=FALSE, fig.height=8, fig.width=16}
+Idents(heart) <- heart[["spatial.ident"]]
+DimPlot(heart, reduction = "umap_pca", 
+        pt.size = 0.1,
+        label = FALSE,
+        split.by = "spatial.ident", 
+        ncol = 4, cols = cols.use) 
+```
+
+
+## data integration
+```{r data_integration, echo=FALSE}
+heart.list <- SplitObject(heart, split.by = "spatial.ident")
+
+heart.list <- lapply(X = heart.list, FUN = function(x) {
+    x <- NormalizeData(x, normalization.method = "LogNormalize")
+    x <- FindVariableFeatures(x, nfeatures = 5000)
+})
+
+print("Integrating data sets...")
+
+heart.anchors <- FindIntegrationAnchors(object.list = heart.list,
+                                        dims = 1:30,
+                                        anchor.features = 5000)
+
+heart.integrated <- IntegrateData(anchorset = heart.anchors, 
+                                  dims = 1:30)
+
+DefaultAssay(heart.integrated) = "integrated"
+```
+
+## Dimensionality reduction and Visualization with UMAP
+```{r find, echo=FALSE, warning=-1, fig.height=8, fig.width=10}
+heart.integrated <- ScaleData(heart.integrated, 
+                              features = rownames(heart.integrated),
+                              verbose = FALSE)
+
+heart.integrated <- RunPCA(heart.integrated, npcs = 30, 
+                           reduction.name = "pca", 
+                           verbose = FALSE)
+
+heart.integrated <- RunUMAP(heart.integrated, 
+                            assay = "integrated",
+                            reduction.name = "umap_pca", 
+                            dims = 1:30,
+                            min.dist = 0.1)
+```
+
+
+## visualize per sample
+```{r, echo=FALSE, fig.height=8, fig.width=16}
+Idents(heart.integrated) <- heart.integrated[["spatial.ident"]]
+DimPlot(heart.integrated, reduction = "umap_pca", 
+        pt.size = 0.1,
+        label = FALSE,
+        split.by = "spatial.ident", 
+        ncol = 4, cols = cols.use) 
+```
+
+## We now check the distribution of each feature again based on UAMP + PCA
+
+```{r, echo=FALSE, fig.height=6, fig.width=12}
+p1 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "TSS_fragments_log", pt.size = 0.1)
+p2 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "DNase_sensitive_region_fragments_log", pt.size = 0.1)
+p3 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "enhancer_region_fragments_log", pt.size = 0.1)
+p4 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "promoter_region_fragments_log", pt.size = 0.1)
+p5 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "on_target_fragments_log", pt.size = 0.1)
+p6 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "blacklist_region_fragments_log", pt.size = 0.1)
+p7 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "peak_region_fragments_log", pt.size = 0.1)
+p8 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "peak_region_cutsites_log", pt.size = 0.1)
+p9 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                  features = "passed_filters_log", pt.size = 0.1)
+p10 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                   features = "duplicate_log", pt.size = 0.1)
+p11 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                   features = "pct_reads_in_peaks", pt.size = 0.1)
+p12 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                   features = "pct_reads_in_promoters", pt.size = 0.1)
+p13 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                   features = "blacklist_ratio", pt.size = 0.1)
+p14 <- FeaturePlot(heart.integrated, reduction = "umap_pca", 
+                   features = "nucleosome_signal", pt.size = 0.1)
+
+CombinePlots(plots = list(p1, p2), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p3, p4), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p5, p6), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p7, p8), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p9, p10), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p11, p12), ncol = 2, legend = 'none')
+CombinePlots(plots = list(p13, p14), ncol = 2, legend = 'none')
+```
+
+## check cell correlation
+```{r, fig.height=12, fig.width=12}
+ck166 <- readRDS("../../ATAC_Single_Sample_V2/data/CK166/CK166_unionPeaks.Rds")
+ck167 <- readRDS("../../ATAC_Single_Sample_V2/data/CK167/CK167_unionPeaks.Rds")
+ck168 <- readRDS("../../ATAC_Single_Sample_V2/data/CK168/CK168_unionPeaks.Rds")
+ck170 <- readRDS("../../ATAC_Single_Sample_V2/data/CK170/CK170_unionPeaks.Rds")
+ck171 <- readRDS("../../ATAC_Single_Sample_V2/data/CK171/CK171_unionPeaks.Rds")
+ck173 <- readRDS("../../ATAC_Single_Sample_V2/data/CK173/CK173_unionPeaks.Rds")
+ck174 <- readRDS("../../ATAC_Single_Sample_V2/data/CK174/CK174_unionPeaks.Rds")
+
+
+df1 <- subset(ck166@meta.data, select = c("celltype"))
+df2 <- subset(ck167@meta.data, select = c("celltype"))
+df3 <- subset(ck168@meta.data, select = c("celltype"))
+df4 <- subset(ck170@meta.data, select = c("celltype"))
+df5 <- subset(ck171@meta.data, select = c("celltype"))
+df6 <- subset(ck173@meta.data, select = c("celltype"))
+df7 <- subset(ck174@meta.data, select = c("celltype"))
+
+df1$patient_celltype <- paste0("P1_RZ_", df1$celltype)
+df2$patient_celltype <- paste0("P5_CR_", df2$celltype)
+df3$patient_celltype <- paste0("P3_BZ_", df3$celltype)
+df4$patient_celltype <- paste0("P4_CR_", df4$celltype)
+df5$patient_celltype <- paste0("P2_BZ_", df5$celltype)
+df6$patient_celltype <- paste0("P3_RZ_", df6$celltype)
+df7$patient_celltype <- paste0("P2_IZ_", df7$celltype)
+
+rownames(df2) <- stringr::str_replace_all(rownames(df2), "-1", "-2")
+rownames(df3) <- stringr::str_replace_all(rownames(df3), "-1", "-3")
+rownames(df4) <- stringr::str_replace_all(rownames(df4), "-1", "-4")
+rownames(df5) <- stringr::str_replace_all(rownames(df5), "-1", "-5")
+rownames(df6) <- stringr::str_replace_all(rownames(df6), "-1", "-6")
+rownames(df7) <- stringr::str_replace_all(rownames(df7), "-1", "-7")
+
+df <- rbind(df1, df2, df3, df4, df5, df6, df7)
+
+
+heart.integrated <- AddMetaData(heart.integrated, df)
+
+Idents(heart.integrated) <- "patient_celltype"
+df <- Reduce("rbind", AverageExpression(object = heart.integrated,
+                                        assays="integrated")) 
+
+## heatmap
+library(pheatmap)
+
+p <- pheatmap(cor(df))
+pdf("../data/heatmap.pdf", height = 12, width = 12)
+print(p)
+dev.off()
+
+print(p)
+
+Idents(heart.integrated) <- "celltype"
+p <- DimPlot(heart.integrated, reduction = "umap_pca",
+        pt.size = 0.1,
+        label = FALSE,
+        cols = cols.celltypes)
+
+pdf("../data/umap.pdf", height = 12, width = 16)
+print(p)
+dev.off()
+
+print(p)
+```
+
+
+## Create a gene activity matrix
+```{r create_ga}
+gene_activities_file <- "../data/GeneActivity.Rds"
+fragment.path <- "../../Aggregation/Heart/outs/fragments.tsv.gz"
+if(!file.exists(gene_activities_file)){
+    # extract gene coordinates from Ensembl, and ensure name formatting is consistent with Seurat object 
+    gene.coords <- genes(EnsDb.Hsapiens.v86, filter = ~ gene_biotype == "protein_coding")
+    seqlevelsStyle(gene.coords) <- 'UCSC'
+    genebody.coords <- keepStandardChromosomes(gene.coords, 
+                                               pruning.mode = 'coarse')
+    genebodyandpromoter.coords <- Extend(x = gene.coords, 
+                                         upstream = 2000, 
+                                         downstream = 0)
+    
+    # create a gene by cell matrix
+    gene.activities <- FeatureMatrix(fragments = fragment.path,
+                                    features = genebodyandpromoter.coords,
+                                    cells = colnames(heart.integrated),
+                                    chunk = 1)
+    
+    # convert rownames from chromsomal coordinates into gene names
+    gene.key <- genebodyandpromoter.coords$gene_name
+    names(gene.key) <- GRangesToString(grange = genebodyandpromoter.coords)
+    rownames(gene.activities) <- gene.key[rownames(gene.activities)]
+    saveRDS(gene.activities, file = gene_activities_file)
+} else{
+    gene.activities <- readRDS(gene_activities_file)
+}
+
+# add the gene activity matrix to the Seurat object as a new assay, and normalize it
+heart.integrated[['GeneActivity']] <- CreateAssayObject(counts = gene.activities)
+DefaultAssay(heart.integrated) <- "GeneActivity"
+heart.integrated <- NormalizeData(object = heart.integrated)
+heart.integrated <- FindVariableFeatures(heart.integrated)
+heart.integrated <- ScaleData(object = heart.integrated)
+```
+
+## save data
+```{r}
+saveRDS(heart.integrated, file = "../data/heart.integrated.Rds")
+```
+
+## Session information
+```{r}
+sessionInfo()
+```
