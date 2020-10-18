@@ -50,7 +50,8 @@ compareTFs = function(TF_act_matA,
                       TF_act_matB, 
                       quantileA = 0.75, 
                       features = NULL,
-                      plotting = F){
+                      plotting = F,
+                      path = NULL){
   
   combined_acts = combine_matrices(TF_act_matA,TF_act_matB)
   
@@ -64,7 +65,7 @@ compareTFs = function(TF_act_matA,
   combined_acts = combined_acts %>%
     dplyr::mutate(TF_name = feature) %>%
     dplyr::group_by(feature) %>%
-    dplyr::mutate(qfilt = quantile(TFa,0.75)) %>%
+    dplyr::mutate(qfilt = quantile(TFa,quantileA)) %>%
     dplyr::mutate(act_group =  factor(ifelse(TFa>= qfilt,
                                       "high","low"),
                                       levels = c("high","low")))
@@ -86,7 +87,7 @@ compareTFs = function(TF_act_matA,
   
   
   if(plotting){
-    
+    pdf(file = path, width = 5,height = 8)
     combined_acts %>%
       nest() %>%
       mutate(vplot = map(data,function(df){
@@ -100,6 +101,7 @@ compareTFs = function(TF_act_matA,
         
         plot(vplots)
       })) 
+    dev.off()
     
   }
  return(wilcox_results)
@@ -145,6 +147,29 @@ fromATACtoviper = function(motif2gene_file, cutoff = 250){
   
 }
 
+#' Use viper regulatory network and make it ready for Module Score
+#' 
+#' @param motif2gene_file: txt file with 3 columns, TF, target, confidence
+#' @param cutoff: number of top genes to consider in the regulon
+#' @return a viper-ready regulon
+#' 
+
+fromvipertoMS = function(viper_regulon){
+  
+  MS_regulon = map(viper_regulon, function(x){
+    return(names(x$tfmode))
+  })
+  
+  return(MS_regulon)
+}
+
+
+#' Generate a regulatory network from an ATAC file: TO DO
+#' 
+#' @param motif2gene_file: txt file with 3 columns, TF, target, confidence
+#' @param cutoff: number of top genes to consider in the regulon
+#' @return a viper-ready regulon
+#' 
 getTF_matrix = function(visium_slide,viper_regulon){
   
   tf_act_mat = viper(eset = as.matrix(visium_slide[["SCT"]]@data), 
@@ -155,6 +180,39 @@ getTF_matrix = function(visium_slide,viper_regulon){
   
   return(tf_act_mat)
 }
+
+
+#' Generate a regulatory network from an ATAC file: TO DO
+#' 
+#' @param motif2gene_file: txt file with 3 columns, TF, target, confidence
+#' @param cutoff: number of top genes to consider in the regulon
+#' @return a viper-ready regulon
+#' 
+getTF_matrix_MS = function(visium_slide,MS_regulon){
+  
+  names_vect = gsub("[.]","_",names(MS_regulon))
+  names_vect = gsub("-","_",names_vect)
+  
+  tf_act_mat = AddModuleScore(visium_slide,features = MS_regulon,
+                              name = paste0(names_vect,"__"))
+  
+  tf_act_mat = tf_act_mat@meta.data
+  
+  cell_ids = rownames(tf_act_mat)
+  calculated_regulons = colnames(tf_act_mat)[grepl("__", colnames(tf_act_mat))]
+  
+  tf_act_mat = tf_act_mat[,calculated_regulons]
+  
+  colnames(tf_act_mat) = unlist(map(strsplit(colnames(tf_act_mat),split = "__"), function(x) x[1]))
+  
+  rownames(tf_act_mat) = cell_ids
+  
+  tf_act_mat = t(as.matrix(tf_act_mat))
+  
+  return(tf_act_mat)
+  
+}
+
 
 # Main
 ATAC_to_space_validaion = function(atac, slide){
@@ -180,13 +238,14 @@ ATAC_to_space_validaion = function(atac, slide){
   # Generate cell-type specific network
   allnets =  tibble("motif2gene_file" = paste0(atac_path,"/",
          list.files(atac_path)),"cell_id" = cell_types) %>%
-    mutate(viper_regulon = map(motif2gene_file,fromATACtoviper)) 
+    mutate(viper_regulon = map(motif2gene_file, fromATACtoviper)) %>%
+    mutate(MS_regulon = map(viper_regulon, fromvipertoMS))
   
   # Compare TF activity - takes a while
   allnets = allnets %>%
-    mutate(comp_results = map(allnets$viper_regulon, function(vp){
+    mutate(comp_results = map(allnets$MS_regulon, function(vp){
       
-      TF_act_matB = getTF_matrix(visium_slide,vp)
+      TF_act_matB = getTF_matrix_MS(visium_slide,vp)
       
       return(compareTFs(TF_act_matA = as.data.frame(hint_mat),
                         TF_act_matB = as.data.frame(TF_act_matB)))
@@ -201,6 +260,9 @@ ATAC_to_space_validaion = function(atac, slide){
   
 }
 
+
+
+
 # Healthy
 
 sample_dictionary = read_delim("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
@@ -210,11 +272,39 @@ sample_dictionary = read_delim("./markers/NEW_PatIDs_visium_overview_allsamples.
 
 MotifToGene = list.files("./MotifToGene/")
 
-TFcomparison = sample_dictionary[,] %>% 
+TFcomparison = sample_dictionary %>% 
   mutate(TF_comp = map2(snATAC,Visium,ATAC_to_space_validaion))
 
 
 # Specific analysis throughout the paper
+# Infarct - IZ
+atac = "CK174"
+slide = "157775"
+
+# Read visium
+slide_file = sprintf("./visium_results_manuscript/processed_objects/%s.rds",
+                     slide,slide)
+visium_slide = readRDS(slide_file)
+DefaultAssay(visium_slide) = "SCT"
+
+# Getting the regulatory networks
+atac_path = sprintf("./MotifToGene/%s",atac)
+all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac))
+
+all_TFs = map(all_res$comp_results, function(x){
+  x %>%
+    dplyr::filter(corr_pvalue < 0.01) %>%
+    pull(feature)
+})
+
+TF_act_matB = getTF_matrix_MS(visium_slide, 
+                              MS_regulon= all_res$MS_regulon[[1]])
+hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
+dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
+
+test = compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                  TF_act_matB = as.data.frame(TF_act_matB),
+                  plotting = T,features = c("NRF1","MEF2C"))
 
 
 # Healthy - cardio 
@@ -231,53 +321,75 @@ DefaultAssay(visium_slide) = "SCT"
 
 # Getting the regulatory networks
 atac_path = sprintf("./MotifToGene/%s",atac)
-all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac))
-
-cardio_TFs = all_res$comp_results[[1]] %>%
-  dplyr::filter(corr_pvalue < 0.01) %>%
-  dplyr::slice(1:10) %>% pull(feature)
-
-TF_act_matB = getTF_matrix(visium_slide,all_res$viper_regulon[[1]][cardio_TFs])
-hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
-dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
-  
-compareTFs(TF_act_matA = as.data.frame(hint_mat),
-           TF_act_matB = as.data.frame(TF_act_matB),
-           features = cardio_TFs,plotting = T)
-
-compareTFs(TF_act_matA = as.data.frame(hint_mat),
-           TF_act_matB = as.data.frame(dorothea_mat),
-           features = cardio_TFs,plotting = T)
-
-
-
-visium_slide[['cardioTFs']] = CreateAssayObject(data = TF_act_matB)
-DefaultAssay(visium_slide) = "cardioTFs"
-SpatialFeaturePlot(visium_slide,features = "MEF2C")
-
-
-allnets = allnets %>%
-  mutate(comp_results = map(allnets$viper_regulon, function(vp){
-    
-    TF_act_matB = getTF_matrix(visium_slide,vp)
-    
-    return(compareTFs(TF_act_matA = as.data.frame(hint_mat),
-                      TF_act_matB = as.data.frame(TF_act_matB)))
+all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac)) %>%
+  mutate(MS_regulon = map(MS_regulon, function(x){
+    names(x) = toupper(names(x))
+    return(x)
   }))
 
+CM_TFs = c("MEF2C", "NR5A2")
+ENDO1_TFs = c("SOX8")
+FIB1_TFs = c("TCF21")
+FIB2_TFs = c("FOS", "JUN")
+MACROPH_TFs = c("ETV6","SPIB")
+
+TFs = c(CM_TFs, ENDO1_TFs, FIB1_TFs, FIB2_TFs, MACROPH_TFs)
+
+hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
+
+all_res = all_res %>%
+  dplyr::filter(cell_id %in% c("Cardiomyocyes",
+                               "Endohelial_1",
+                               "Fibroblass_1",
+                               "Fibroblass_2",
+                               "Macrophages_1")) %>%
+  group_by(cell_id) %>%
+  dplyr::mutate(TF_act_matB = map(MS_regulon, function(x){
+    
+    TF_act = getTF_matrix_MS(visium_slide,MS_regulon = x[TFs])
+    
+    return(TF_act)
+    }))
+
+all_res$TFs_test  = list(CM_TFs, ENDO1_TFs, FIB1_TFs, FIB2_TFs, MACROPH_TFs)
+
+dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
 
 
-sample_dictionary
+healthy_results = pmap(all_res[,c("cell_id","TF_act_matB","TFs_test")], function(cell_id,TF_act_matB,TFs_test){
+  
+  path = paste0("./visium_results_manuscript/atac_validation/healthy/", cell_id,"_modulescore.pdf")
+  
+  pdf(file = path, width = 5,height = 8)
+  
+  modules_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+             TF_act_matB = as.data.frame(TF_act_matB),
+             plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  
+  dev.off()
+  
+  path = paste0("./visium_results_manuscript/atac_validation/healthy/", cell_id,"_dorothea.pdf")
+  
+  pdf(file = path, width = 5,height = 8)
+  
+  if(sum(TFs_test %in% rownames(dorothea_mat))>0){
+    dorothea_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                      TF_act_matB = as.data.frame(dorothea_mat),
+                      plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  }else{
+    dorothea_res = NULL
+  }
+  dev.off()
+  
+  return(enframe(list("module_score" = modules_res,
+                      "dorothea_score" = dorothea_res)) %>% unnest())
+})
 
-
-
-
-
-
-
-
-
-
-
-
+names(healthy_results) = all_res$cell_id
+write.table(file = "./visium_results_manuscript/atac_validation/healthy/wilcoxon_results.txt",
+            enframe(healthy_results) %>% unnest(),
+            quote = F,
+            row.names = F,
+            col.names = T,
+            sep = "\t")
 
