@@ -45,7 +45,6 @@ combine_matrices = function(TF_act_matA, TF_act_matB){
 #' 
 #' 
 #' 
-
 compareTFs = function(TF_act_matA, 
                       TF_act_matB, 
                       quantileA = 0.75, 
@@ -83,12 +82,8 @@ compareTFs = function(TF_act_matA,
     ungroup() %>%
     dplyr::arrange(corr_pvalue)
   
-    
-  
-  
   if(plotting){
-    pdf(file = path, width = 5,height = 8)
-    combined_acts %>%
+    plot_list = combined_acts %>%
       nest() %>%
       mutate(vplot = map(data,function(df){
         
@@ -98,12 +93,17 @@ compareTFs = function(TF_act_matA,
           geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
           theme_minimal() +
           ggtitle(unique(df$TF_name))
-        
-        plot(vplots)
-      })) 
+      })) %>%
+      dplyr::pull(vplot)
+    
+    pdf(file = path, width = 5,height = 8)
+    
+    map(plot_list,plot)
+    
     dev.off()
     
   }
+  
  return(wilcox_results)
 }
 
@@ -260,10 +260,7 @@ ATAC_to_space_validaion = function(atac, slide){
   
 }
 
-
-
-
-# Healthy
+# All runs
 
 sample_dictionary = read_delim("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
                                delim = "\t") %>%
@@ -275,39 +272,9 @@ MotifToGene = list.files("./MotifToGene/")
 TFcomparison = sample_dictionary %>% 
   mutate(TF_comp = map2(snATAC,Visium,ATAC_to_space_validaion))
 
+# Visualizations
 
-# Specific analysis throughout the paper
-# Infarct - IZ
-atac = "CK174"
-slide = "157775"
-
-# Read visium
-slide_file = sprintf("./visium_results_manuscript/processed_objects/%s.rds",
-                     slide,slide)
-visium_slide = readRDS(slide_file)
-DefaultAssay(visium_slide) = "SCT"
-
-# Getting the regulatory networks
-atac_path = sprintf("./MotifToGene/%s",atac)
-all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac))
-
-all_TFs = map(all_res$comp_results, function(x){
-  x %>%
-    dplyr::filter(corr_pvalue < 0.01) %>%
-    pull(feature)
-})
-
-TF_act_matB = getTF_matrix_MS(visium_slide, 
-                              MS_regulon= all_res$MS_regulon[[1]])
-hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
-dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
-
-test = compareTFs(TF_act_matA = as.data.frame(hint_mat),
-                  TF_act_matB = as.data.frame(TF_act_matB),
-                  plotting = T,features = c("NRF1","MEF2C"))
-
-
-# Healthy - cardio 
+# Healthy
 # CK166
 
 atac = "CK166"
@@ -349,7 +316,7 @@ all_res = all_res %>%
     TF_act = getTF_matrix_MS(visium_slide,MS_regulon = x[TFs])
     
     return(TF_act)
-    }))
+  }))
 
 all_res$TFs_test  = list(CM_TFs, ENDO1_TFs, FIB1_TFs, FIB2_TFs, MACROPH_TFs)
 
@@ -360,27 +327,21 @@ healthy_results = pmap(all_res[,c("cell_id","TF_act_matB","TFs_test")], function
   
   path = paste0("./visium_results_manuscript/atac_validation/healthy/", cell_id,"_modulescore.pdf")
   
-  pdf(file = path, width = 5,height = 8)
-  
   modules_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
-             TF_act_matB = as.data.frame(TF_act_matB),
-             plotting = T,features = TFs_test, quantileA = 0.90, path = path))
-  
-  dev.off()
+                            TF_act_matB = as.data.frame(TF_act_matB),
+                            plotting = T,features = TFs_test, quantileA = 0.90, path = path))
   
   path = paste0("./visium_results_manuscript/atac_validation/healthy/", cell_id,"_dorothea.pdf")
   
-  pdf(file = path, width = 5,height = 8)
-  
+
   if(sum(TFs_test %in% rownames(dorothea_mat))>0){
     dorothea_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
-                      TF_act_matB = as.data.frame(dorothea_mat),
-                      plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+                               TF_act_matB = as.data.frame(dorothea_mat),
+                               plotting = T,features = TFs_test, quantileA = 0.90, path = path))
   }else{
     dorothea_res = NULL
   }
-  dev.off()
-  
+
   return(enframe(list("module_score" = modules_res,
                       "dorothea_score" = dorothea_res)) %>% unnest())
 })
@@ -393,3 +354,172 @@ write.table(file = "./visium_results_manuscript/atac_validation/healthy/wilcoxon
             col.names = T,
             sep = "\t")
 
+
+# Specific analysis throughout the paper
+# Infarct - IZ
+atac = "CK174"
+slide = "157775"
+
+# Read visium
+slide_file = sprintf("./visium_results_manuscript/processed_objects/%s.rds",
+                     slide,slide)
+
+visium_slide = readRDS(slide_file)
+DefaultAssay(visium_slide) = "SCT"
+
+# Getting the regulatory networks
+atac_path = sprintf("./MotifToGene/%s",atac)
+all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac))
+
+TFs = c("NRF1","MEF2C")
+
+# Generating the MS matrices per cell-type
+
+all_res = all_res %>%
+  dplyr::filter(cell_id %in% c("Cardiomyocyes","Fibroblass_0")) %>%
+  group_by(cell_id) %>%
+  dplyr::mutate(TF_act_matB = map(MS_regulon, function(x){
+    
+    TF_act = getTF_matrix_MS(visium_slide,MS_regulon = x[TFs])
+    
+    return(TF_act)
+  }))
+
+# Testing them
+
+all_res$TFs_test  = list(TFs, TFs)
+
+dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
+hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
+
+ischemic_results = pmap(all_res[,c("cell_id","TF_act_matB","TFs_test")], function(cell_id,TF_act_matB,TFs_test){
+  
+  path = paste0("./visium_results_manuscript/atac_validation/ischemic/", cell_id,"_modulescore.pdf")
+  
+  modules_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                            TF_act_matB = as.data.frame(TF_act_matB),
+                            plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  
+  path = paste0("./visium_results_manuscript/atac_validation/ischemic/", cell_id,"_dorothea.pdf")
+  
+  if(sum(TFs_test %in% rownames(dorothea_mat))>0){
+    dorothea_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                               TF_act_matB = as.data.frame(dorothea_mat),
+                               plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  }else{
+    dorothea_res = NULL
+  }
+  
+  pdf(file = paste0("./visium_results_manuscript/atac_validation/ischemic/", cell_id,"_spatialplots.pdf"))
+  
+  DefaultAssay(visium_slide) = "HINT_TF_Activity"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  visium_slide[['TF_act_matB_MS']] = CreateAssayObject(data = TF_act_matB)
+  DefaultAssay(visium_slide) = "TF_act_matB_MS"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  DefaultAssay(visium_slide) = "dorothea"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  dev.off()
+  
+  return(enframe(list("module_score" = modules_res,
+                      "dorothea_score" = dorothea_res)) %>% unnest())
+})
+
+names(ischemic_results) = all_res$cell_id
+write.table(file = "./visium_results_manuscript/atac_validation/ischemic/wilcoxon_results.txt",
+            enframe(ischemic_results) %>% unnest(),
+            quote = F,
+            row.names = F,
+            col.names = T,
+            sep = "\t")
+
+# Specific analysis throughout the paper
+# Border Zone
+atac = "CK168"
+slide = "157781"
+
+# Read visium
+slide_file = sprintf("./visium_results_manuscript/processed_objects/%s.rds",
+                     slide,slide)
+visium_slide = readRDS(slide_file)
+DefaultAssay(visium_slide) = "SCT"
+
+# Getting the regulatory networks
+atac_path = sprintf("./MotifToGene/%s",atac)
+all_res = readRDS(file = sprintf(paste0(atac_path,"/%s_TFvalidation.rds"),atac)) %>%
+  mutate(MS_regulon = map(MS_regulon, function(x){
+    names(x) = toupper(names(x))
+    return(x)
+  }))
+
+CM_TFs = c("GATA4", "MEF2C","MYOD1")
+CM1_TFs = c("NFE2L1")
+CM2_TFs = c("SMAD3","SMAD4","SMAD5", "JUN", "FOS")
+FB_TFs = c("RUNX1","RUNX2")
+
+TFs = c(CM_TFs, CM1_TFs, CM2_TFs, FB_TFs)
+
+all_res = all_res %>%
+  dplyr::filter(cell_id %in% c("Cardiomyocyes_1",
+                               "Cardiomyocyes_2",
+                               "Fibroblass_1")) %>%
+  group_by(cell_id) %>%
+  dplyr::mutate(TF_act_matB = map(MS_regulon, function(x){
+    
+    TF_act = getTF_matrix_MS(visium_slide,MS_regulon = x[TFs])
+    
+    return(TF_act)
+  }))
+
+all_res$TFs_test  = list(TFs, TFs, TFs)
+
+dorothea_mat = as.matrix(visium_slide[["dorothea"]]@data)
+hint_mat = as.matrix(visium_slide[["HINT_TF_Activity"]]@data)
+
+bz_results = pmap(all_res[,c("cell_id","TF_act_matB","TFs_test")], function(cell_id,TF_act_matB,TFs_test){
+  
+  path = paste0("./visium_results_manuscript/atac_validation/borderzone/", cell_id,"_modulescore.pdf")
+  
+  modules_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                            TF_act_matB = as.data.frame(TF_act_matB),
+                            plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  
+  path = paste0("./visium_results_manuscript/atac_validation/borderzone/", cell_id,"_dorothea.pdf")
+  
+  
+  if(sum(TFs_test %in% rownames(dorothea_mat))>0){
+    dorothea_res = (compareTFs(TF_act_matA = as.data.frame(hint_mat),
+                               TF_act_matB = as.data.frame(dorothea_mat),
+                               plotting = T,features = TFs_test, quantileA = 0.90, path = path))
+  }else{
+    dorothea_res = NULL
+  }
+  
+  pdf(file = paste0("./visium_results_manuscript/atac_validation/borderzone/", cell_id,"_spatialplots.pdf"))
+  
+  DefaultAssay(visium_slide) = "HINT_TF_Activity"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  visium_slide[['TF_act_matB_MS']] = CreateAssayObject(data = TF_act_matB)
+  DefaultAssay(visium_slide) = "TF_act_matB_MS"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  DefaultAssay(visium_slide) = "dorothea"
+  plot(SpatialFeaturePlot(visium_slide, features = TFs_test))
+  
+  dev.off()
+  
+  return(enframe(list("module_score" = modules_res,
+                      "dorothea_score" = dorothea_res)) %>% unnest())
+})
+
+names(bz_results) = all_res$cell_id
+write.table(file = "./visium_results_manuscript/atac_validation/borderzone/wilcoxon_results.txt",
+            enframe(bz_results) %>% unnest(),
+            quote = F,
+            row.names = F,
+            col.names = T,
+            sep = "\t")
