@@ -38,7 +38,7 @@ Our results provide novel links between cell composition and function that could
  ***
 
  ### How to cite
- > Kuppe C, Ramirez Flores RO, Li Zhijian, et al. “Spatially integrated single cell transcriptomic and epigenomic map of human myocardial infarction.” TBD. 2020. DOI: [TBA](link)
+ > Kuppe C, Ramirez Flores RO, Li Z, et al. “Spatially integrated single cell transcriptomic and epigenomic map of human myocardial infarction.” TBD. 2020. DOI: [TBA](link)
 
  ***
 
