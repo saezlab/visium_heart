@@ -2,8 +2,8 @@
 # roramirezf@uni-heidelberg.de
 
 #' Processing visium slides
-#' Adds PROGENy scores, TF activities,
-#' Independent cell type markers
+#' SCT normalization, graph based clustering + UMAP
+#' Adds PROGENy scores, TF activities, and ECM scores
 
 source("./visium/visiumtools/reading2clustering.R")
 source("./visium/visiumtools/funcomics.R")
