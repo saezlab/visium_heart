@@ -60,20 +60,20 @@ We clustered each single dataset of snRNA and snATAC independently. First, we an
  Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/visium).
 
 **Processing of data, clustering + spot characterization** 
-Scripts available [here] (https://github.com/saezlab/visium_heart/blob/master/visium/individual_slides.R).
+Scripts available [here](https://github.com/saezlab/visium_heart/blob/master/visium/individual_slides.R).
 
 **SPARK analysis + enrichment analysis** 
-Scripts available [here] (https://github.com/saezlab/visium_heart/blob/master/visium/spatstat_analysis.R) and [here] (https://github.com/saezlab/visium_heart/blob/master/visium/annotate_spark_sl.R)
+Scripts available [here](https://github.com/saezlab/visium_heart/blob/master/visium/spatstat_analysis.R) and [here](https://github.com/saezlab/visium_heart/blob/master/visium/annotate_spark_sl.R)
 
 **Label transfer to generate cell-type scores** 
-Scripts available [here] (https://github.com/saezlab/visium_heart/blob/master/visium/integrated_transfer.R)
+Scripts available [here](https://github.com/saezlab/visium_heart/blob/master/visium/integrated_transfer.R)
 
 **Differential expression analysis to characterize areas** 
-Scripts available [here] (https://github.com/saezlab/visium_heart/blob/master/visium/differential_analysis.R) and [here] (https://github.com/saezlab/visium_heart/blob/master/visium/dot_plots.R).
+Scripts available [here](https://github.com/saezlab/visium_heart/blob/master/visium/differential_analysis.R) and [here](https://github.com/saezlab/visium_heart/blob/master/visium/dot_plots.R).
 
 **MISTy analysis**
-Cell-type pipeline [here] (https://github.com/saezlab/visium_heart/blob/master/visium/misty_heart_pipeline.R), area pipeline [here] (https://github.com/saezlab/visium_heart/blob/master/visium/infarction_misty.R), grouping results [here] (https://github.com/saezlab/visium_heart/blob/master/visium/summarizing_MISTy.R)
+Cell-type pipeline [here](https://github.com/saezlab/visium_heart/blob/master/visium/misty_heart_pipeline.R), area pipeline [here](https://github.com/saezlab/visium_heart/blob/master/visium/infarction_misty.R), grouping results [here](https://github.com/saezlab/visium_heart/blob/master/visium/summarizing_MISTy.R)
 
 **Correlation of TF binding activities with regular expression in space**
-Script available [here] (https://github.com/saezlab/visium_heart/blob/master/visium/validateATACbinding.R)
+Script available [here](https://github.com/saezlab/visium_heart/blob/master/visium/validateATACbinding.R)
 
