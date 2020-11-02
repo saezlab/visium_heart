@@ -121,25 +121,11 @@ process_visium = function(dir_path,
   
   dev.off()
   
-  ## <<Identify variable genes for clustering>>
-  #To do: add SPARK wrapper
-  if(var_features == "seurat"){
-    
-    visium_slide = FindVariableFeatures(visium_slide, selection.method = "vst", 
-                       nfeatures = 2000)
-    
-    var_feat = VariableFeatures(visium_slide)
-    
-  } else if(var_features == "spark"){ #For cluster, in local it takes too much time
-    var_feat = FindSparkFeatures(visium_slide, p_value_thrsh = p_value_thrsh)
-  }
-  
   DefaultAssay(visium_slide) = "SCT"
   
   visium_slide = RunPCA(visium_slide, 
                         assay = "SCT", 
-                        verbose = verbose,
-                        features = var_feat)
+                        verbose = verbose)
   
   visium_slide = FindNeighbors(visium_slide, reduction = "pca", dims = 1:30)
   # Granularity for clustree
