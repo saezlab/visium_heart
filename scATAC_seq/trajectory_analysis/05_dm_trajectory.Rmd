@@ -1,0 +1,346 @@
+---
+title: "Analyze data using ArchR"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(magrittr)
+library(WriteXLS)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(cluster)
+library(cowplot)
+library(gridExtra)
+library(viridis)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(data.table)
+library(ArchR)
+```
+
+```{r set_parameters, echo=FALSE}
+## set parameters
+set.seed(42)
+addArchRThreads(threads = parallel::detectCores() - 2)
+addArchRGenome("hg38")
+
+cols.celltypes <- c(
+    'Fibroblasts 0' = '#f032e6',
+    'Fibroblasts 1' = '#911eb4',
+    'Fibroblasts 2' = '#e6beff',
+    'Fibroblasts 3' = '#f032e6',
+    'Fibroblasts 5' = '#f032e6')
+```
+
+## Reading data
+```{r load_data}
+proj <- loadArchRProject(path = "./Fib", showLogo = FALSE)
+proj <- addImputeWeights(proj)
+```
+
+## add diffusion map
+```{r add_diffusion_map}
+library(destiny)
+
+dm <- DiffusionMap(proj@embeddings$UMAP_Harmony$df,
+                   verbose = TRUE)
+
+embedding <- as.data.frame(dm)[, c("DC1", "DC2")]
+
+colnames(embedding) <- c("Harmony#DC_Dimension_1",
+                         "Harmony#DC_Dimension_2")
+
+proj@embeddings[["dm"]] <- SimpleList(df = embedding,
+                                      params = NULL)
+
+p <- plotEmbedding(ArchRProj = proj,
+                   embedding = "dm",
+                   colorBy = "cellColData",
+                   name = "Clusters_Harmony")
+
+print(p)
+```
+
+## check cell fraction
+```{r cell_fraction}
+df <- as.data.frame(proj@cellColData)
+
+df.plot <- df %>% group_by(Clusters_Harmony, spatial.ident) %>%
+    summarise(num_cells = n()) %>%
+    mutate(fraction = num_cells / sum(num_cells))
+    
+
+p <- ggplot(data = df.plot, 
+            aes(x = Clusters_Harmony, y = fraction)) +
+    geom_bar(aes(fill = spatial.ident), stat = "identity") +
+    scale_fill_brewer(palette = "Set1")
+
+print(p)
+
+```
+
+
+
+
+## add motif matrix
+```{r add_motif}
+proj <- addMotifAnnotations(ArchRProj = proj, 
+                            motifSet = "cisbp", 
+                            name = "Motif",
+                            force = TRUE)
+
+proj <- addDeviationsMatrix(
+  ArchRProj = proj, 
+  peakAnnotation = "Motif",
+  force = TRUE,
+  binarize = TRUE,
+  matrixName = "MotifMatrix")
+
+```
+
+
+
+## visualize marker genes
+```{r viz_marker_genes}
+p <- plotEmbedding(
+    ArchRProj = proj, 
+    colorBy = "GeneScoreMatrix", 
+    name = c("POSTN", "COL1A1", "SCARA5", "RUNX2"), 
+    embedding = "dm",
+    size = 1,
+    quantCut = c(0.01, 0.95)
+)
+
+p$POSTN
+p$COL1A1
+p$SCARA5
+p$RUNX2
+
+p <- plotGroups(ArchRProj = proj, 
+                 groupBy = "Clusters_Harmony", 
+                 colorBy = "GeneScoreMatrix", 
+                 name = c("POSTN", "COL1A1", "SCARA5", "RUNX2"),
+                 plotAs = "violin",
+                 alpha = 0.4,
+                 addBoxPlot = TRUE)
+
+p$POSTN
+p$COL1A1
+p$SCARA5
+p$RUNX2
+```
+
+## add trajectory
+```{r add_trajectory}
+proj <- addTrajectory(
+    ArchRProj = proj, 
+    name = "Myofib1", 
+    groupBy = "Clusters_Harmony",
+    trajectory = c("C2", "C3", "C9", "C8", "C6"), 
+    reducedDims = "dm",
+    embedding = "dm", 
+    force = TRUE
+)
+
+proj <- addTrajectory(
+    ArchRProj = proj, 
+    name = "Myofib2", 
+    groupBy = "Clusters_Harmony",
+    trajectory = c("C10", "C11", "C4", "C5", "C1", "C6"), 
+    reducedDims = "dm",
+    embedding = "dm", 
+    force = TRUE
+)
+```
+
+## plot trajectory
+```{r plot_trajectory, fig.width=8, fig.height=4}
+p1 <- plotTrajectory(proj, 
+                    trajectory = "Myofib1", 
+                    colorBy = "cellColData", 
+                    name = "Myofib1",
+                    embedding = "dm",
+                    size = 0.5,
+                    quantCut = c(0.01, 0.95),
+                    title = "Myofib1")
+
+p2 <- plotTrajectory(proj, 
+                    trajectory = "Myofib2", 
+                    colorBy = "cellColData", 
+                    name = "Myofib2",
+                    embedding = "dm",
+                    size = 0.5,
+                    quantCut = c(0.01, 0.95),
+                    title = "Myofib2")
+
+ggAlignPlots(p1[[1]], p2[[1]], type="h")
+```
+
+## visualize genes along trajectory
+```{r viz_genes_trajectory, fig.height=4, fig.width=8}
+for (gene in c("POSTN", "COL1A1", "SCARA5", "RUNX2", "FN1", "RUNX1", "NKD2")) {
+    p1 <- plotTrajectory(proj, 
+                         trajectory = "Myofib1", 
+                    colorBy = "GeneScoreMatrix", 
+                    name = gene, 
+                    continuousSet = "blueYellow",
+                    embedding = "dm",
+                    title = "Myofib1")
+    
+    p2 <- plotTrajectory(proj, 
+                    trajectory = "Myofib2", 
+                    colorBy = "GeneScoreMatrix", 
+                    name = gene, 
+                    continuousSet = "blueYellow",
+                    embedding = "dm",
+                    title = "Myofib2")
+
+    ggAlignPlots(p1[[2]] , p2[[2]], type = "h")
+}
+
+```
+
+
+## heatmap showing all marker genes
+```{r plot_gene_heatmap, fig.height=12, fig.width=6}
+trajGSM1 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib1", 
+                         useMatrix = "GeneScoreMatrix", 
+                         log2Norm = TRUE)
+
+trajGSM2 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib2", 
+                         useMatrix = "GeneScoreMatrix", 
+                         log2Norm = TRUE)
+
+p1 <- plotTrajectoryHeatmap(trajGSM1,  
+                           pal = paletteContinuous(set = "horizonExtra"),
+                           labelTop = 100)
+
+p2 <- plotTrajectoryHeatmap(trajGSM2,  
+                           pal = paletteContinuous(set = "horizonExtra"),
+                           labelTop = 100)
+
+
+p1
+p2
+```
+
+
+## heatmap showing motif accessibility
+```{r plot_motif_heatmap, fig.height=12, fig.width=6}
+trajMM1 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib1", 
+                         useMatrix = "MotifMatrix", 
+                         log2Norm = FALSE,
+                         scaleTo = NULL)
+
+trajMM2 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib2", 
+                         useMatrix = "MotifMatrix", 
+                         log2Norm = FALSE,
+                         scaleTo = NULL)
+
+p1 <- plotTrajectoryHeatmap(trajMM1,  
+                           pal = paletteContinuous(set = "solarExtra"),
+                           labelRows = TRUE,
+                           labelTop = 100,
+                           varCutOff = 0.8,
+                           limits = c(-2, 2))
+
+p2 <- plotTrajectoryHeatmap(trajMM2,  
+                           pal = paletteContinuous(set = "solarExtra"),
+                           labelRows = TRUE,
+                           labelTop = 100,
+                           varCutOff = 0.8,
+                           limits = c(-2, 2))
+
+p1
+p2
+```
+
+
+## Integrative pseudo-time analyses
+```{r integrative_1, fig.height=8, fig.width=8}
+corGSM_MM1 <- correlateTrajectories(trajGSM1, 
+                                    trajMM1,
+                                    corCutOff = 0.0,
+                                    varCutOff1 = 0.8,
+                                    varCutOff2 = 0.8)
+
+corGSM_MM1[[1]]
+corGSM_MM1[[1]] <- subset(corGSM_MM1[[1]], FDR < 0.05)
+
+trajGSM1 <- trajGSM1[corGSM_MM1[[1]]$name1, ]
+trajMM1 <- trajMM1[corGSM_MM1[[1]]$name2, ]
+
+trajCombined <- trajGSM1
+assay(trajCombined, withDimnames=FALSE) <- t(apply(assay(trajGSM1), 1, scale)) + t(apply(assay(trajMM1), 1, scale))
+
+combinedMat <- plotTrajectoryHeatmap(trajCombined, 
+                                     returnMat = TRUE, 
+                                     varCutOff = 0)
+
+rowOrder <- match(rownames(combinedMat), rownames(trajGSM1))
+
+ht1 <- plotTrajectoryHeatmap(trajGSM1,  
+                             pal = paletteContinuous(set = "horizonExtra"),  
+                             varCutOff = 0, 
+                             rowOrder = rowOrder)
+
+ht2 <- plotTrajectoryHeatmap(trajMM1, 
+                             pal = paletteContinuous(set = "solarExtra"), 
+                             varCutOff = 0, 
+                             rowOrder = rowOrder)
+
+ht1 + ht2
+```
+
+
+## Integrative pseudo-time analyses
+```{r integrative_2, fig.height=8, fig.width=8}
+corGSM_MM2 <- correlateTrajectories(trajGSM2, 
+                                    trajMM2,
+                                    corCutOff = 0.0)
+
+corGSM_MM2[[1]]
+corGSM_MM2[[1]] <- subset(corGSM_MM2[[1]], FDR < 0.05)
+
+trajGSM2 <- trajGSM2[corGSM_MM2[[1]]$name1, ]
+trajMM2 <- trajMM2[corGSM_MM2[[1]]$name2, ]
+
+trajCombined <- trajGSM2
+assay(trajCombined, withDimnames=FALSE) <- t(apply(assay(trajGSM2), 1, scale)) + t(apply(assay(trajMM2), 1, scale))
+
+combinedMat <- plotTrajectoryHeatmap(trajCombined, 
+                                     returnMat = TRUE, 
+                                     varCutOff = 0)
+
+rowOrder <- match(rownames(combinedMat), rownames(trajGSM2))
+
+ht1 <- plotTrajectoryHeatmap(trajGSM2,  
+                             pal = paletteContinuous(set = "horizonExtra"),  
+                             varCutOff = 0, rowOrder = rowOrder)
+
+ht2 <- plotTrajectoryHeatmap(trajMM2, 
+                             pal = paletteContinuous(set = "solarExtra"), 
+                             varCutOff = 0, rowOrder = rowOrder)
+
+ht1 + ht2
+```
+
+## save data
+```{r}
+saveArchRProject(ArchRProj = proj, 
+                 load = FALSE)
+```
+
+## Session information
+```{r}
+sessionInfo()
+```

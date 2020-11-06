@@ -1,0 +1,107 @@
+---
+title: "Analyze data using ArchR"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(magrittr)
+library(WriteXLS)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(cluster)
+library(cowplot)
+library(gridExtra)
+library(viridis)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(data.table)
+library(ArchR)
+```
+
+```{r set_parameters, echo=FALSE}
+## set parameters
+set.seed(42)
+addArchRThreads(threads = 1)
+addArchRGenome("hg38")
+```
+
+## Reading barcodes
+```{r}
+message("Reading in integrated data...")
+heart.integrated <- readRDS("../../ATAC_Integration/data/heart.integrated.Rds")
+meta_data <- heart.integrated@meta.data
+print(colnames(meta_data))
+
+fib_meta_data <- subset(meta_data, celltype %in% c("Fibroblasts 0",
+                                                   "Fibroblasts 1",
+                                                   "Fibroblasts 2",
+                                                   "Fibroblasts 3",
+                                                   "Fibroblasts 5"))
+```
+
+
+
+## Creating an ArchRProject
+```{r, fig.width=6, fig.height=6}
+
+ArrowFiles <- "./Heart.arrow"
+
+# With our Arrow files in hand, we are now ready to create an ArchRProject. An ArchRProject is associated with a set of Arrow files and is the backbone of nearly all ArchR analyses.
+proj <- ArchRProject(
+  ArrowFiles = ArrowFiles, 
+  outputDirectory = "Fib",
+  showLogo = FALSE,
+  copyArrows = TRUE #This is recommened so that you maintain an unaltered copy for later usage.
+)
+
+library(dplyr)
+fib_meta_data <- fib_meta_data %>% 
+    mutate_if(is.factor, as.character)
+
+proj <- addCellColData(ArchRProj = proj,
+                       data = fib_meta_data$celltype,
+                       name = "celltype",
+                       cells = rownames(proj),
+                       force = TRUE)
+
+proj <- addCellColData(ArchRProj = proj,
+                       data = fib_meta_data$spatial.ident,
+                       name = "spatial.ident",
+                       cells = rownames(proj),
+                       force = TRUE)
+
+p1 <- plotGroups(ArchRProj = proj, 
+                 groupBy = "celltype", 
+                 colorBy = "cellColData", 
+                 name = "TSSEnrichment",
+                 alpha = 0.4,
+                 plotAs = "violin",
+                 addBoxPlot = TRUE)
+
+p2 <- plotGroups(ArchRProj = proj, 
+                 groupBy = "spatial.ident", 
+                 colorBy = "cellColData", 
+                 name = "log10(nFrags)",
+                 plotAs = "violin",
+                 alpha = 0.4,
+                 addBoxPlot = TRUE)
+
+print(p1)
+print(p2)
+```
+
+## save data
+```{r}
+saveArchRProject(ArchRProj = proj, 
+                 load = FALSE)
+```
+
+## Session information
+```{r}
+sessionInfo()
+```

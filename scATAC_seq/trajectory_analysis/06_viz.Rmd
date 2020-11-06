@@ -1,0 +1,326 @@
+---
+title: "Analyze data using ArchR"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(magrittr)
+library(WriteXLS)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(cluster)
+library(cowplot)
+library(gridExtra)
+library(viridis)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(data.table)
+library(ArchR)
+```
+
+```{r set_parameters, echo=FALSE}
+## set parameters
+set.seed(42)
+addArchRThreads(threads = parallel::detectCores() - 2)
+addArchRGenome("hg38")
+```
+
+## Reading data
+```{r load_data}
+proj <- loadArchRProject(path = "./Fib", showLogo = FALSE)
+proj <- addImputeWeights(proj)
+
+proj$Clusters_Harmony <- stringr::str_replace_all(proj$Clusters_Harmony,
+                                                     "C", "")
+```
+
+
+## check cell fraction
+```{r cell_fraction}
+df <- as.data.frame(proj@cellColData)
+
+df.plot <- df %>% group_by(Clusters_Harmony, spatial.ident) %>%
+    summarise(num_cells = n()) %>%
+    mutate(fraction = num_cells / sum(num_cells))
+
+p <- ggplot(data = df.plot, 
+            aes(x = Clusters_Harmony, y = fraction)) +
+    geom_bar(aes(fill = spatial.ident), stat = "identity") +
+    scale_fill_brewer(palette = "Set1") + 
+    theme_cowplot() +
+    xlab("Clusters") + ylab("Cell fraction") +
+    theme(legend.title = element_blank())
+    
+
+p
+
+pdf("./Figures/cell_fraction.pdf", height = 6, width = 6)
+print(p)
+dev.off()
+```
+
+## plot diffusion map
+```{r}
+p <- plotEmbedding(ArchRProj = proj,
+                   embedding = "dm",
+                   colorBy = "cellColData",
+                   name = "Clusters_Harmony",
+                   labelSize = 0) +
+    theme_cowplot() +
+    ggtitle("") +
+    theme(legend.title = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank()) +
+    xlab("DC 1") + ylab("DC 2")
+
+p
+
+pdf("./Figures/diffusion_map.pdf", height = 6, width = 6)
+print(p)
+dev.off()
+
+```
+
+
+## visualize marker genes
+```{r viz_marker_genes}
+for (gene in c("POSTN", "COL1A1", "SCARA5", "RUNX2")) {
+    p1 <- plotEmbedding(ArchRProj = proj, 
+                        colorBy = "GeneScoreMatrix", 
+                        name = gene, 
+                        embedding = "dm",
+                        quantCut = c(0.01, 0.95)) +
+        theme_cowplot() +
+        ggtitle("") +
+        theme(legend.title = element_blank(),
+              axis.text.x = element_blank(),
+              axis.text.y = element_blank(),
+              axis.ticks = element_blank()) +
+        xlab("DC 1") + ylab("DC 2")
+
+    p2 <- plotGroups(ArchRProj = proj, 
+                 groupBy = "Clusters_Harmony", 
+                 colorBy = "GeneScoreMatrix", 
+                 name = gene,
+                 plotAs = "violin",
+                 alpha = 0.4,
+                 addBoxPlot = TRUE) +
+                theme_cowplot() +
+        ggtitle("") + xlab("Cluster") + ylab("Gene Score")
+    
+    pdf(sprintf("./Figures/diffusion_map_%s.pdf", gene), 
+        height = 6, width = 6)
+    print(p1)
+    dev.off()
+    
+    pdf(sprintf("./Figures/violin_%s.pdf", gene), 
+    height = 4, width = 6)
+    print(p2)
+    dev.off()
+    
+    print(p1)
+    print(p2)
+}
+```
+
+
+## plot trajectory
+```{r}
+p <- plotTrajectory(proj, 
+                    trajectory = "Myofib1", 
+                    colorBy = "cellColData", 
+                    name = "Myofib1",
+                    embedding = "dm",
+                    size = 0.5,
+                    quantCut = c(0.01, 0.95),
+                    continuousSet = "blueYellow")
+            
+
+p1 <- p[[1]] + theme_cowplot() +
+    ggtitle("") +
+    theme(legend.title = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank()) +
+        xlab("DC 1") + ylab("DC 2")
+
+pdf("./Figures/trajectory.pdf", height = 6, width = 6)
+print(p1)
+dev.off()
+
+p1
+```
+
+
+## Integrative pseudo-time analyses
+```{r integrative_1, fig.height=8, fig.width=8}
+trajGSM1 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib1", 
+                         useMatrix = "GeneScoreMatrix", 
+                         log2Norm = TRUE)
+
+trajMM1 <- getTrajectory(ArchRProj = proj, 
+                         name = "Myofib1", 
+                         useMatrix = "MotifMatrix", 
+                         log2Norm = FALSE,
+                         scaleTo = NULL)
+
+corGSM_MM1 <- correlateTrajectories(trajGSM1, 
+                                    trajMM1,
+                                    corCutOff = 0.0,
+                                    varCutOff1 = 0.5,
+                                    varCutOff2 = 0.5)
+
+corGSM_MM1[[1]]
+df <- subset(corGSM_MM1[[1]], FDR < 0.1)
+df <- df[!grepl("-AS", df$name1), ]
+
+write.table(df, file = "sel_tf.txt", quote = FALSE, sep = "\t")
+
+trajGSM1 <- trajGSM1[df$name1, ]
+trajMM1 <- trajMM1[df$name2, ]
+
+trajCombined <- trajGSM1
+assay(trajCombined, withDimnames=FALSE) <- t(apply(assay(trajGSM1), 1, scale)) + t(apply(assay(trajMM1), 1, scale))
+
+combinedMat <- plotTrajectoryHeatmap(trajCombined, 
+                                     returnMat = TRUE, 
+                                     varCutOff = 0,
+                                     force = TRUE)
+
+rowOrder <- match(rownames(combinedMat), rownames(trajGSM1))
+
+ht1 <- plotTrajectoryHeatmap(trajGSM1,  
+                             pal = paletteContinuous(set = "horizonExtra"),  
+                             varCutOff = 0, 
+                             rowOrder = rowOrder,
+                             limits = c(-2, 2),
+                             labelMarkers = df$matchname1)
+
+ht2 <- plotTrajectoryHeatmap(trajMM1, 
+                             pal = paletteContinuous(set = "solarExtra"), 
+                             varCutOff = 0, 
+                             rowOrder = rowOrder,
+                             limits = c(-2, 2),
+                             labelMarkers = df$matchname2)
+
+pdf("./Figures/heatmap.pdf", width = 8, height = 4)
+ht1 + ht2
+dev.off()
+
+
+ht1 + ht2
+```
+
+## visualize
+```{r}
+for (gene in df$matchname1) {
+        p1 <- plotTrajectory(proj, 
+                         trajectory = "Myofib1", 
+                    colorBy = "GeneScoreMatrix", 
+                    name = gene, 
+                    continuousSet = "blueYellow",
+                    embedding = "dm",
+                    title = "Myofib1",
+                    quantCut = c(0, 1))
+        
+        p1 <- p1[[2]] + theme_cowplot() +
+            ggtitle(gene) +
+            xlab("Pseudotime") + 
+            ylab("Gene Score")
+        
+        pdf(sprintf("./Figures/pseudotime_gs_%s.pdf", gene), 
+                height = 4, width = 6)
+        print(p1)
+        dev.off()
+
+        print(p1)
+}
+
+for (gene in df$name2) {
+        p1 <- plotTrajectory(proj, 
+                         trajectory = "Myofib1", 
+                    colorBy = "MotifMatrix", 
+                    name = gene, 
+                    continuousSet = "blueYellow",
+                    embedding = "dm",
+                    title = "Myofib1",
+                    quantCut = c(0, 1))
+        
+        p1 <- p1[[2]] + theme_cowplot() +
+            ggtitle(gene) +
+            xlab("Pseudotime") + 
+            ylab("Motif Accessibility")
+        
+        pdf(sprintf("./Figures/pseudotime_motif_%s.pdf", gene), 
+                height = 4, width = 6)
+        print(p1)
+        dev.off()
+
+        print(p1)
+}
+
+```
+
+## target genes of RUNX2
+```{r}
+for (gene in c("COL1A1", "COL12A1", "ACTN1", "CREB3L2", "RUNX1", "NEGR1", "SMAD3",
+               "PCOLCE2", "NCAM1", "MSX2", "SFRP4")) {
+    p1 <- plotEmbedding(ArchRProj = proj, 
+                        colorBy = "GeneScoreMatrix", 
+                        name = gene, 
+                        embedding = "dm",
+                        quantCut = c(0.01, 0.95)) +
+        theme_cowplot() +
+        ggtitle("") +
+        theme(legend.title = element_blank(),
+              axis.text.x = element_blank(),
+              axis.text.y = element_blank(),
+              axis.ticks = element_blank()) +
+        xlab("DC 1") + ylab("DC 2")
+
+    p2 <- plotTrajectory(proj, 
+                         trajectory = "Myofib1", 
+                    colorBy = "GeneScoreMatrix", 
+                    name = gene, 
+                    continuousSet = "blueYellow",
+                    embedding = "dm",
+                    title = "Myofib1",
+                    quantCut = c(0, 1))
+        
+        p2 <- p2[[2]] + theme_cowplot() +
+            ggtitle(gene) +
+            xlab("Pseudotime") + 
+            ylab("Gene Score")
+    
+    pdf(sprintf("./RUNX2_Target/diffusion_map_%s.pdf", gene), 
+        height = 6, width = 6)
+    print(p1)
+    dev.off()
+    
+    pdf(sprintf("./RUNX2_Target/pseudotime_gs_%s.pdf", gene), 
+    height = 4, width = 6)
+    print(p2)
+    dev.off()
+    
+    print(p1)
+    print(p2)
+}
+
+
+
+```
+
+
+
+
+## Session information
+```{r}
+sessionInfo()
+```

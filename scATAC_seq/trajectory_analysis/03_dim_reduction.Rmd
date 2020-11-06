@@ -1,0 +1,153 @@
+---
+title: "Analyze data using ArchR"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(magrittr)
+library(WriteXLS)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(cluster)
+library(cowplot)
+library(gridExtra)
+library(viridis)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(data.table)
+library(ArchR)
+```
+
+```{r set_parameters, echo=FALSE}
+## set parameters
+set.seed(42)
+addArchRThreads(threads = 1)
+addArchRGenome("hg38")
+
+
+cols.celltypes <- c(
+    'Fibroblasts 0' = '#f032e6',
+    'Fibroblasts 1' = '#911eb4',
+    'Fibroblasts 2' = '#e6beff',
+    'Fibroblasts 3' = '#f032e6',
+    'Fibroblasts 5' = '#f032e6')
+```
+
+## Reading data
+```{r}
+proj <- loadArchRProject(path = "./Fib", showLogo = FALSE)
+
+proj <- addImputeWeights(proj,
+                         reducedDims = "IterativeLSI")
+```
+
+## Iterative Latent Semantic Indexing (LSI)
+```{r}
+proj <- addIterativeLSI(
+    ArchRProj = proj,
+    varFeatures = 25000,
+    sampleCellsFinal = NULL,
+    saveIterations = FALSE,
+    force = TRUE
+)
+
+proj <- addHarmony(
+    ArchRProj = proj,
+    reducedDims = "IterativeLSI",
+    name = "Harmony",
+    groupBy = "spatial.ident"
+)
+```
+
+## Clustering and Visualizing using IterativeLSI 
+```{r, fig.height=6, fig.width=18}
+proj <- addClusters(
+    input = proj,
+    reducedDims = "IterativeLSI",
+    method = "Seurat",
+    name = "Clusters",
+    resolution = 0.8,
+    force = TRUE
+)
+
+proj <- addUMAP(
+    ArchRProj = proj, 
+    reducedDims = "IterativeLSI", 
+    name = "UMAP", 
+    nNeighbors = 30, 
+    metric = "cosine",
+    force = TRUE
+)
+
+p1 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "celltype", embedding = "UMAP")
+
+p2 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "spatial.ident", embedding = "UMAP")
+
+p3 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "Clusters", embedding = "UMAP")
+
+ggAlignPlots(p1, p2, p3, type = "h")
+```
+
+
+## Clustering and Visualizing using Harmony 
+```{r, fig.height=6, fig.width=18}
+proj <- addClusters(
+    input = proj,
+    reducedDims = "Harmony",
+    method = "Seurat",
+    name = "Clusters_Harmony",
+    resolution = 0.8,
+    force = TRUE
+)
+
+proj <- addUMAP(
+    ArchRProj = proj, 
+    reducedDims = "Harmony", 
+    name = "UMAP_Harmony", 
+    nNeighbors = 30, 
+    metric = "cosine",
+    force = TRUE
+)
+
+p1 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "celltype", 
+                    embedding = "UMAP_Harmony")
+
+p2 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "spatial.ident", 
+                    embedding = "UMAP_Harmony")
+
+p3 <- plotEmbedding(ArchRProj = proj, 
+                    colorBy = "cellColData", 
+                    name = "Clusters_Harmony", 
+                    embedding = "UMAP_Harmony")
+
+ggAlignPlots(p1, p2, p3, type = "h")
+```
+
+
+
+
+## save data
+```{r}
+saveArchRProject(ArchRProj = proj, 
+                 load = FALSE)
+```
+
+## Session information
+```{r}
+sessionInfo()
+```
