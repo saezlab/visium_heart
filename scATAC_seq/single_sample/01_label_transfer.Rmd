@@ -1,0 +1,288 @@
+---
+title: "Cell Clustering"
+author: "Zhijian Li"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+params:
+    sample: "SAMPLE"
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(magrittr)
+library(WriteXLS)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(Signac)
+library(Seurat)
+library(cluster)
+library(clustree)
+library(mclust)
+library(cowplot)
+library(gridExtra)
+library(ggrastr)
+library(viridis)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(EnsDb.Hsapiens.v86)
+library(data.table)
+library(patchwork)
+```
+
+```{r set_parameters, echo=FALSE}
+sample <- params$sample
+
+atac_to_rna <- setNames(c("CK158", "CK159", "CK160",  "CK162", 
+                         "CK163", "CK164","CK165"), 
+                       c("CK166", "CK167", "CK168",  "CK170", 
+                         "CK171", "CK173", "CK174"))
+
+atac_dir <- paste0("../../run20_ATAC_visium/", sample) 
+rna_dir <- "../../scRNA_filtered"
+
+dir.out <- paste0("../data/", sample)
+if(!dir.exists(dir.out)){
+    dir.create(dir.out)
+}
+
+rna_sample <- atac_to_rna[sample]
+print(paste("SAMPLE, atacname, rna_name:", sample, rna_sample))
+```
+
+
+## define color code
+```{r}
+cols = c('Cardiomyocytes' = '#800000',
+'Cardiomyocytes 1' = '#800000',
+'Cardiomyocytes 2' = '#9A6324',
+'Cardiomyocytes 3' = '#808000',
+'Fibroblasts' = '#911eb4',
+'Fibroblasts 1 COL15A1+' = '#911eb4',
+'Fibroblasts 1' = '#911eb4',
+'Fibroblasts 2 SCARA5+' = '#e6beff',
+'Fibroblasts 2' = '#e6beff',
+'Fibroblasts 3' = '#f032e6',
+'Endothelial cells' = '#000075',
+'Endothelial cells 1' = '#000075',
+'Endothelial cells 2' = 'blue',
+'Endothelial cells 2 POSTN+' = 'blue',
+'Endothelial cells 3' = '#568198',
+'Endothelial cells 3 PLVAP+' = '#568198',
+'Endothelial cells 3 VEGFC+' = '#568198',
+'Endothelial cells 4' = '#469990',
+'Endothelial cells 4 SEMA3G+' = '#469990',
+'Macrophages' = '#e6194B',
+'Macrophages 1 CD163+' = '#e6194B',
+'Macrophages 2 CD11C+' = '#fabebe',
+'Pericytes' = '#f58231',
+'Pericytes EGFLAM+' = '#f58231',
+'T cells' = '#ffe119',
+'Lymphatic endothelial cells' = '#ffd8b1',
+'Adipocytes' = '#000000',
+'Neuronal cells' = '#42d4f4',
+'Erythrocytes' = '#999999',
+'Proliferating cells' = '#999999',
+'Damaged endothelial cells' = '#999999',
+'Vascular smooth muscle cells' = '#aaffc3')
+```
+
+
+## processing ATAC-seq data
+```{r load_data}
+counts <- Read10X_h5(filename = paste0(atac_dir, "/outs/filtered_peak_bc_matrix.h5"))
+metadata <- read.csv(file = paste0(atac_dir, "/outs/singlecell.csv"),
+                     header = TRUE,
+                     row.names = 1)
+metadata <- subset(metadata, is__cell_barcode == 1)
+
+heart.atac <- CreateSeuratObject(counts = counts,
+                          assay = 'peaks',
+                          project = 'ATAC',
+                          min.cells = 1,
+                          meta.data = metadata)
+
+fragment.path <- paste0(atac_dir, "/outs/fragments.tsv.gz")
+heart.atac <- SetFragments(object = heart.atac, file = fragment.path)
+heart.atac <- subset(heart.atac, subset = passed_filters > 3000)
+print(heart.atac)
+
+heart.atac$passed_filters_log <- log10(heart.atac$passed_filters)
+heart.atac$pct_reads_in_peaks <- heart.atac$peak_region_fragments / heart.atac$passed_filters * 100
+```
+
+## Normalization and linear dimensional reduction
+```{r dim_reduction, fig.width=12, fig.height=6}
+heart.atac <- RunTFIDF(heart.atac)
+heart.atac <- FindTopFeatures(heart.atac, min.cutoff = 'q0')
+heart.atac <- RunSVD(object = heart.atac,
+              assay = 'peaks',
+              reduction.key = 'LSI_',
+              reduction.name = 'lsi')
+
+# The first LSI component often captures sequencing depth (technical variation) rather than biological variation. If this is the case, the component should be removed from downstream analysis. We can assess the correlation between the first LSI component and sequencing depth using the FeatureScatter function:
+
+p1 <- FeatureScatter(heart.atac, 'LSI_1', 'nCount_peaks') + NoLegend()
+p2 <- FeatureScatter(heart.atac, 'LSI_2', 'nCount_peaks') + NoLegend()
+
+p1 + p2
+
+heart.atac <- RunUMAP(object = heart.atac, reduction = 'lsi', 
+                      dims = 2:30, reduction.name = "umap",
+                      min.dist = 0.1)
+```
+
+
+## load rna data
+```{r, fig.width=6, fig.height=6, echo=FALSE}
+rna_filename <- file.path(rna_dir,  paste0(rna_sample, ".filtered.annotated.rds"))
+heart.rna <- readRDS(rna_filename)
+heart.rna$tech <- "RNA"
+heart.rna$celltype <- Idents(heart.rna)
+
+heart.atac$tech <- "ATAC"
+```
+
+
+## visualization
+```{r, fig.width=12, fig.height=6}
+p1 <- DimPlot(heart.atac, reduction = "umap") + 
+    NoLegend() + ggtitle("scATAC-seq")
+
+p2 <- DimPlot(heart.rna, group.by = "celltype", 
+              label = TRUE, repel = TRUE,
+              cols = cols) + NoLegend() + ggtitle("scRNA-seq")
+
+p1 + p2
+```
+
+
+## Create a gene activity matrix
+```{r create_ga}
+gene_activities_file <- paste0( paste0(dir.out, "/", sample, "_GeneActivity.Rds"))
+if(!file.exists(gene_activities_file)){
+    # extract gene coordinates from Ensembl, and ensure name formatting is consistent with Seurat object 
+    gene.coords <- genes(EnsDb.Hsapiens.v86, filter = ~ gene_biotype == "protein_coding")
+    seqlevelsStyle(gene.coords) <- 'UCSC'
+    genebody.coords <- keepStandardChromosomes(gene.coords, 
+                                               pruning.mode = 'coarse')
+    genebodyandpromoter.coords <- Extend(x = gene.coords, 
+                                         upstream = 2000, 
+                                         downstream = 0)
+    
+    # create a gene by cell matrix
+    gene.activities <- FeatureMatrix(fragments = fragment.path,
+                                    features = genebodyandpromoter.coords,
+                                    cells = colnames(heart.atac),
+                                    chunk = 1)
+    
+    # convert rownames from chromsomal coordinates into gene names
+    gene.key <- genebodyandpromoter.coords$gene_name
+    names(gene.key) <- GRangesToString(grange = genebodyandpromoter.coords)
+    rownames(gene.activities) <- gene.key[rownames(gene.activities)]
+    saveRDS(gene.activities, file = gene_activities_file)
+} else{
+    gene.activities <- readRDS(gene_activities_file)
+}
+
+# add the gene activity matrix to the Seurat object as a new assay, and normalize it
+heart.atac[['GeneActivity']] <- CreateAssayObject(counts = gene.activities)
+DefaultAssay(heart.atac) <- "GeneActivity"
+heart.atac <- NormalizeData(object = heart.atac)
+heart.atac <- FindVariableFeatures(heart.atac)
+heart.atac <- ScaleData(object = heart.atac)
+```
+
+
+## Label transfering
+```{r label_transfering, fig.width=14, fig.height=6}
+## transfer as imputation
+DefaultAssay(heart.atac) <- "peaks"
+VariableFeatures(heart.atac) <- names(which(Matrix::rowSums(heart.atac) > 0))
+
+transfer.anchors <- FindTransferAnchors(reference = heart.rna, 
+                                        query = heart.atac, 
+                                        features = VariableFeatures(object = heart.rna), 
+                                        reference.assay = "RNA", 
+                                        query.assay = "GeneActivity",
+                                        reduction = "cca")
+
+celltype.predictions <- TransferData(anchorset = transfer.anchors, 
+                                     refdata = heart.rna$celltype, 
+                                     weight.reduction = heart.atac[["lsi"]], 
+                                     dims = 2:30)
+heart.atac <- AddMetaData(heart.atac, metadata = celltype.predictions)
+
+hist(heart.atac$prediction.score.max)
+abline(v = 0.5, col = "red")
+
+table(heart.atac$prediction.score.max > 0.5)
+
+heart.atac$predicted.id <- factor(heart.atac$predicted.id, 
+                                  levels = levels(heart.rna))  # to make the colors match
+p1 <- DimPlot(heart.atac, group.by = "predicted.id", 
+              label = TRUE, repel = TRUE, cols = cols) + ggtitle("scATAC-seq cells") + 
+    NoLegend()
+
+p2 <- DimPlot(heart.rna, group.by = "celltype", 
+              label = TRUE, repel = TRUE, cols = cols) + ggtitle("scRNA-seq cells") + 
+    NoLegend()
+
+p1 + p2
+```
+
+
+## Co-embedding
+```{r co-embedding, fig.height=6, fig.width=12}
+genes.use <- VariableFeatures(heart.rna)
+refdata <- GetAssayData(heart.rna, assay = "RNA", slot = "data")[genes.use, ]
+
+imputation <- TransferData(anchorset = transfer.anchors, 
+                           refdata = refdata, 
+                           weight.reduction = heart.atac[["lsi"]], 
+                           dims = 2:30)
+
+# this line adds the imputed data matrix to the atac object
+heart.atac[["RNA"]] <- imputation
+coembed <- merge(x = heart.rna, y = heart.atac)
+
+# Finally, we run PCA and UMAP on this combined object, to visualize the co-embedding of both
+# datasets
+coembed <- ScaleData(coembed, features = genes.use, do.scale = FALSE)
+coembed <- RunPCA(coembed, features = genes.use, verbose = FALSE)
+coembed <- RunUMAP(coembed, dims = 1:30, min.dist = 0.1)
+coembed$cell_type <- ifelse(!is.na(coembed$celltype), coembed$celltype, coembed$predicted.id)
+
+p <- DimPlot(coembed, group.by="cell_type", 
+             split.by="tech", pt.size = 0.1, label = FALSE, cols = cols)
+
+ggsave(filename = paste0(dir.out, "/", sample, "_coembedding.pdf"), 
+       width = 8, height = 4, units = "in")
+
+p
+```
+
+
+## QC of ATAC-seq from combedding
+```{r qc_coembedding, fig.width=8, fig.height=4}
+coembed.atac <- subset(coembed, subset = tech == "ATAC")
+
+FeaturePlot(coembed.atac, reduction = "umap", 
+            features = c("passed_filters_log",
+                         "pct_reads_in_peaks"), 
+            pt.size = 0.1, ncol = 2)
+```
+
+
+## save data
+```{r}
+saveRDS(heart.atac, file = paste0(dir.out, "/", sample, ".Rds"))
+saveRDS(coembed, file = paste0(dir.out, "/", sample, "_integrated.Rds"))
+```
+
+## Session information
+```{r}
+sessionInfo()
+```
