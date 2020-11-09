@@ -3,9 +3,6 @@
 source ~/.zshrc
 conda activate r-heart
 
-# This script is designed to process single cell ATAC-seq data using C1 system with paired-end sequencing
-# The input is sequence read archive (SRA) number.
-
 bowtie2_index=/hpcwork/izkf/projects/SingleCellOpenChromatin/local/Bowtie2_indexes/hg38/hg38
 
 sra=$1
