@@ -22,23 +22,14 @@ Our results provide novel links between cell composition and function that could
  ***
 
  ### Availabilty of data
- The datasets supporting the conclusions of this publication are available at Zenodo:
- 10.5281/zenodo.3797044
- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3797044.svg)](https://zenodo.org/record/3797044#.XsQPMy2B2u5)
-
- From Zenodo you can download these (zipped) folders: 
-
-  * `data` - Contains the directory with processed data sets used for the analysis and to generate the figures
-
- Please deposit the unzipped folders in the root directory of this R-project.
 
   **Exceptions:**
- Raw data can't be directly provided at the moment, however submissions to proper data repositories are being prepared and will be updated as soon as possible
+ Raw data can't be directly provided at the moment. Processed data will be available in proper data repositories after publication.
 
  ***
 
  ### How to cite
- > Kuppe C, Ramirez Flores RO, Li Z, et al. “Spatially integrated single cell transcriptomic and epigenomic map of human myocardial infarction.” TBD. 2020. DOI: [TBA](link)
+ > Kuppe C, Ramirez Flores RO, Li Z, et al. “Multi-omic map of human myocardial infarction.” TBA. 2020. DOI: [TBA](link)
 
  ***
 
