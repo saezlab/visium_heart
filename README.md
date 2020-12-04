@@ -42,10 +42,10 @@ We clustered each single dataset of snRNA and snATAC independently. First, we an
 
 
  #### sn-ATAC analysis
- Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/scATAC_seq).
+ Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/snATAC_seq).
 
  #### sn-RNASeq analysis
- Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/scATAC_seq).
+ Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/snRNA_seq).
 
  #### Spatial transcriptomics analysis
  Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/visium).
