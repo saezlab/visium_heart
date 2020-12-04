@@ -12,7 +12,7 @@ library(ggrepel)
 
 
 sample = 'CK160'
-sc = readRDS(file = paste0(sample, '.filtered.annotated.rds'))
+sc = readRDS(file = paste0('../data/', sample, '.filtered.annotated.rds'))
 DefaultAssay(sc) = 'RNA'
 
 
