@@ -30,7 +30,7 @@ write.table(markers[,c('gene',cols[-6])],
 #---- Volcano plot of DGEs
 # Courtesy of Zhijian Li (lzj1769)
 
-df = read.table("../scRNA_filtered/DGEA/CK160.CM1.vs.CM2.dge.txt", header = TRUE)
+df = read.table(file = paste0('../data/', sample, '.CM1.vs.CM2.dge.txt'), header = TRUE)
 df$p_val_adj_log10 = -log10(df$p_val_adj) 
 df$Sign = ifelse(-log10(df$p_val_adj) > 10 & abs(df$avg_logFC) > 0.3, 'Yes', 'No')
 
