@@ -36,8 +36,7 @@ df$Sign = ifelse(-log10(df$p_val_adj) > 10 & abs(df$avg_logFC) > 0.3, 'Yes', 'No
 
 
 # Show interesting genes
-df_text = subset(df, gene %in% c('ANKRD1', 'NPPB', 'MYO18B',
-                                  'FHL2', 'CACNB2'))
+df_text = subset(df, gene %in% c('ANKRD1', 'NPPB', 'MYO18B', 'FHL2', 'CACNB2'))
 
 
 pdf(file = 'cardiomyocyte_diff_genes_volcano.pdf', height = 6, width = 6)
