@@ -41,10 +41,10 @@ Our results provide novel links between cell composition and function that could
 We clustered each single dataset of snRNA and snATAC independently. First, we annotated the snRNA-Seq data and used label transfer via Seurat for annotation of the snATAC-Seq datasets. Single nuclear datasets were then integrated using Seurat. (Step 2) We detected transcription factor (TF) binding activities of specific cell-types with footprinting analysis on snATAC-seq data using HINT-ATAC. To uncover potential regulatory regions that control gene expression in different cell-types, we identified peak-to-gene links using the integrated snATAC-seq and snRNA-seq datasets. We use cell specific footprints and peak-to-gene links to derive TF and cell specific regulomes. (Step 3) For the spatial data we used SPARK to identify spatially variable genes and overrespresentation analysis (ORA) for a general slide characterization. Then, to functionally characterize each spot, we estimated the activities of transcription factors and signaling pathway activities using DoRothEA and PROGENy, respectively. (Step 4) Spatial patterns of expression were obtained using unsupervised clustering and differential expression analysis was used to manually annotate each area. We inferred the cell-type composition of each spot by transferring the cell-type annotations from their respective single nuclear datasets. (Step 5) TF binding activity scores from snATAC datasets were mapped to the spatial location by considering the cellular composition of the spots. (Step 6) Finally, we studied spatial interactions using MISTy to estimate the importance of putative extracellular matrix proteins and cytokines, and pathway activities in the expression of marker genes of specific cell types.
 
 
- #### sn-ATAC analysis
+ #### snATAC-seq analysis
  Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/snATAC_seq).
 
- #### sn-RNASeq analysis
+ #### snRNA-seq analysis
  Scripts available [here](https://github.com/saezlab/visium_heart/tree/master/snRNA_seq).
 
  #### Spatial transcriptomics analysis
