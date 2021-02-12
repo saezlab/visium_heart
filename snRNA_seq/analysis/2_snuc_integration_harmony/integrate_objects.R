@@ -1,0 +1,141 @@
+# Copyright (c) [2021] [Ricardo O. Ramirez Flores]
+# roramirezf@uni-heidelberg.de
+
+#' In this script we automatize the integration of Seurat objects using Harmony
+#' 
+#' It requires a folder path with processed Seurat objects from run_singleprocessing.R
+
+library(optparse)
+library(tidyverse)
+library(Seurat)
+library(harmony)
+library(cluster)
+source("./utils/sc_plts.R")
+
+# Argument definition ---------------------------------------------------------------------------------
+option_list <- list(
+  make_option(c("--path"), 
+              action ="store", 
+              default = NULL, 
+              type = 'character',
+              help = "location where samples are located"),
+  make_option(c("--out_file"), 
+              action= "store", 
+              default = NULL, 
+              type = 'character',
+              help = "where to save the rds objects"),
+  make_option(c("--out_fig_file"), 
+              action= "store", 
+              default = NULL, 
+              type = 'character',
+              help = "where to save the plots objects")
+)
+
+# Parse the parameters ---------------------------------------------------------------------------------
+opt <- parse_args(OptionParser(option_list = option_list))
+
+cat("[INFO] Input parameters\n", file = stdout())
+for(user_input in names(opt)) {
+  if(user_input=="help") next;
+  cat(paste0("[INFO] ",user_input," => ",opt[[user_input]],"\n"),file = stdout())
+  assign(user_input,opt[[user_input]])
+}
+
+slide_files <- list.files(path)
+# Because of incompatibility with objects objects should be appended manually
+slide_files_path <- set_names(paste0(path,slide_files), gsub(pattern = "[.]rds",
+                                                             replacement = "",
+                                                             slide_files))
+
+slide_data <- map(slide_files_path, readRDS)
+
+# Create merged object
+integrated_data <- reduce(slide_data,
+                          merge,
+                          merge.data = TRUE)
+
+# Process it before integration -----------------------
+integrated_data <- integrated_data %>%
+  FindVariableFeatures(selection.method = "vst", 
+                       nfeatures = 3000) %>% 
+  ScaleData(verbose = FALSE) %>% 
+  RunPCA(pc.genes = integrated_data@var.genes, 
+         npcs = 30, 
+         verbose = FALSE) 
+
+original_pca_plt <- DimPlot(object = integrated_data, 
+              reduction = "pca", 
+              pt.size = .1, 
+              group.by = "orig.ident")
+
+
+# Integrate the data -----------------------
+integrated_data <- RunHarmony(integrated_data, 
+                              "orig.ident", 
+                              plot_convergence = TRUE)
+
+# Corrected dimensions -----------------------
+corrected_pca_plt <- DimPlot(object = integrated_data, 
+              reduction = "harmony", 
+              pt.size = .1, 
+              group.by = "orig.ident")
+
+# Create the UMAP with new reduction -----------
+integrated_data <- integrated_data %>% 
+  RunUMAP(reduction = "harmony", dims = 1:30)
+
+# Clustering and optimization -------------------------
+print("Optimizing clustering")
+
+integrated_data <- FindNeighbors(integrated_data, 
+                                 reduction = "harmony", 
+                                 dims = 1:30)
+
+seq_res <- seq(0.1, 1, 0.1)
+
+integrated_data <- FindClusters(integrated_data,
+                                resolution = seq_res,
+                                verbose = F)
+
+# Optimize clustering ------------------------------------------------------
+cell_dists <- dist(integrated_data@reductions$harmony@cell.embeddings,
+                   method = "euclidean")
+
+cluster_info <- integrated_data@meta.data[,grepl("RNA_snn_res",
+                                               colnames(integrated_data@meta.data))] %>%
+  dplyr::mutate_all(as.character) %>%
+  dplyr::mutate_all(as.numeric)
+
+silhouette_res <- apply(cluster_info, 2, function(x){
+  si <- silhouette(x, cell_dists)
+  mean(si[, 'sil_width'])
+})
+
+integrated_data[["opt_clust_integrated"]] <- integrated_data[[names(which.max(silhouette_res))]]
+
+Idents(integrated_data) = "opt_clust_integrated"
+
+# Save object ------------------------------------------------------
+
+saveRDS(integrated_data, file = out_file)
+
+# Print QC file ------------------------------------------------------
+
+umap_corrected_sample <- DimPlot(object = integrated_data, 
+        reduction = "umap", 
+        pt.size = .1, 
+        group.by = "orig.ident")
+
+umap_corrected_clustering <- DimPlot(object = integrated_data, 
+          reduction = "umap", 
+          pt.size = .1, 
+          group.by = "opt_clust_integrated")
+
+pdf(file = out_fig_file, height = 10, width = 12)
+
+print(original_pca_plt)
+print(corrected_pca_plt)
+print(umap_corrected_sample)
+print(umap_corrected_clustering)
+
+dev.off()
