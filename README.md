@@ -21,7 +21,7 @@ Our results provide novel links between cell composition and function that could
 
  ***
 
- ### Availabilty of data
+ ### Availability of data
 
   **Exceptions:**
  Raw data can't be directly provided at the moment. Processed data will be available in proper data repositories after publication.
