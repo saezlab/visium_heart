@@ -31,7 +31,7 @@ option_list <- list(
               help = "number of top features to show per cluster"),
   make_option(c("--ngenes_ORA"), 
               action ="store", 
-              default = 100, 
+              default = 10, 
               type = 'double',
               help = "minimum number of genes for ORA"),
   make_option(c("--pvalue_ORA"), 
@@ -73,6 +73,8 @@ for(user_input in names(opt)) {
 
 # Read data -------------------------------------------------------------------------------------------
 integrated_data <- readRDS(data_path)
+Idents(integrated_data) <- group_class
+
 dea_res <- readRDS(dea_data_path)
 # This is hardcoded somewhere
 gsets <- readRDS("./markers/Genesets_Dec19.rds")
@@ -156,7 +158,7 @@ if("RNA" %in% dea_res_df$assay) {
   
   genes_df <- dea_res_df %>%
     dplyr::filter(assay == "RNA") %>%
-    select(dea) %>% unnest()
+    dplyr::select(dea) %>% unnest()
   
   genes <- genes_df %>%
     dplyr::select(cluster, gene) %>%
