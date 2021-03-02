@@ -95,8 +95,8 @@ filter_def <- function(dea_df, out_dat_path) {
   
   filtered_df <- dplyr::filter(dea_df,
                             p_val_adj <= pvalue,
-                            avg_logFC > lfc) %>%
-    arrange(cluster,-avg_logFC)
+                            avg_log2FC > lfc) %>%
+    arrange(cluster,-avg_log2FC)
   
   write.table(x = filtered_df,
               file = out_dat_path,

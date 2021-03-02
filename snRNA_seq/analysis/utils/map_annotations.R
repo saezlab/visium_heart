@@ -3,8 +3,8 @@ library(tidyverse)
 
 vars_to_transfer <- "States"
 
-data_A <- readRDS("./visium_results_manuscript/ct_data/cardiomyocytes_states.rds")
-data_B <- readRDS("./visium_results_manuscript/ct_data/snRNA.Rds")
+data_A <- readRDS("./visium_results_manuscript/ct_data/fibro/fibroblasts_states.rds")
+data_B <- readRDS("./visium_results_manuscript/ct_data/fibro_snRNA.Rds")
 
 # To be sure we always use cell_ids and orig.ident
 meta_son <- data_B@meta.data %>%
@@ -17,8 +17,10 @@ meta_parent <- data_A@meta.data %>%
   rownames_to_column("cell_id") %>%
   left_join(meta_son, by = c("cell_id","orig.ident"))
 
+meta_parent[,vars_to_transfer] <- gsub("[()]","", meta_parent[,vars_to_transfer])
 
-data_A <- AddMetaData(object = data_A,meta_parent[,vars_to_transfer], 
+data_A <- AddMetaData(object = data_A,
+                      meta_parent[,vars_to_transfer], 
                       col.name = vars_to_transfer)
 
-saveRDS(data_A, file = "./visium_results_manuscript/ct_data/cardiomyocytes_states.rds")
+saveRDS(data_A, file = "./visium_results_manuscript/ct_data/fibroblasts_states.rds")

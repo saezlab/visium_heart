@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name=deconv
-#SBATCH -t 200:00
+#SBATCH -t 300:00
 #SBATCH --mem=64GB
 #SBATCH --mail-user=roramirezf@uni-heidelberg.de
 #SBATCH --mail-type=END

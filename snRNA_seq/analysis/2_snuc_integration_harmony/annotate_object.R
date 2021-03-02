@@ -57,16 +57,20 @@ for(user_input in names(opt)) {
 }
 
 # Read object to annotate and get meta-data
-scell_obj <- readRDS(data_path)
-meta_data <- scell_obj@meta.data
-# I assume it will always be a numeric cluster label
-meta_data[, object_id] <- as.numeric(as.character(meta_data[,object_id] ))
-
-# Read object to annotate and get meta-data
 annotation_data <- read.table(file = dictionary_path,
                               header = T,
                               sep = "\t",
                               stringsAsFactors = F)
+
+# Read object to annotate and get meta-data
+scell_obj <- readRDS(data_path)
+meta_data <- scell_obj@meta.data
+# I assume it will always be a numeric cluster label
+meta_data[, object_id] <- as.numeric(as.character(meta_data[,object_id] ))
+# Here I filter for clusters with annotation
+true_ix <- meta_data[, object_id] %in% annotation_data[, dictionary_id]
+scell_obj <- scell_obj[, true_ix]
+meta_data <- meta_data[true_ix ,]
 
 # Left-join
 merge_conditional <- set_names(dictionary_id,object_id)

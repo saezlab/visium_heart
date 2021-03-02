@@ -5,8 +5,9 @@ mouse_genes <- read.csv("./markers/mousegenes.csv",
                         header = F, 
                         stringsAsFactors = F)[,1]
 
-de_genes <- readRDS("./visium_results_manuscript/ct_data/cardio/cardiomyocytes_dea.rds")
-de_genes <- readRDS("./visium_results_manuscript/ct_data/fibro/fibroblasts_dea.rds")
+de_genes <- readRDS("./visium_results_manuscript/ct_data/cardio_coembd/cardio_dea.rds")
+
+de_genes_f <- readRDS("./visium_results_manuscript/ct_data/fibro_coembd/fibro_dea.rds")
 
 
 # First load everything
@@ -45,11 +46,52 @@ converted_genes_bis <- convertHumanGeneList(not_captured_genes)
 converted_genes = rbind(converted_genes, converted_genes_bis)
 
 
+# Check
+
+de_genes$RNA %>%
+  dplyr::filter(p_val_adj <= 0.01,
+                gene %in% converted_genes$HGNC.symbol) %>%
+  arrange(cluster, -avg_logFC) %>%
+  write.table("./visium_results_manuscript/ct_data/cardio_coembd/cardio_gene_intersection.txt",
+              col.names = T,
+              sep = "\t",
+              row.names = F,
+              quote = F)
+
 de_genes$dorothea %>%
-  dplyr::filter(cluster %in% c(2, 3),
-                p_val_adj <= 0.01,
-                avg_logFC >= 0.5,
-                gene %in% converted_genes$HGNC.symbol)
+  dplyr::filter(p_val_adj <= 0.01,
+                gene %in% converted_genes$HGNC.symbol) %>%
+  arrange(cluster, -avg_logFC) %>%
+  write.table("./visium_results_manuscript/ct_data/cardio_coembd/cardio_TFdorothea_intersection.txt",
+              col.names = T,
+              sep = "\t",
+              row.names = F,
+              quote = F)
+
+de_genes_f$RNA %>%
+  dplyr::filter(p_val_adj <= 0.01,
+                gene %in% converted_genes$HGNC.symbol) %>%
+  arrange(cluster, -avg_log2FC) %>%
+  write.table("./visium_results_manuscript/ct_data/fibro_coembd/fibro_gene_intersection.txt",
+              col.names = T,
+              sep = "\t",
+              row.names = F,
+              quote = F)
+
+de_genes_f$dorothea %>%
+  dplyr::filter(p_val_adj <= 0.01,
+                gene %in% converted_genes$HGNC.symbol) %>%
+  arrange(cluster, -avg_log2FC) %>%
+  write.table("./visium_results_manuscript/ct_data/fibro_coembd/fibro_TFdorothea_intersection.txt",
+              col.names = T,
+              sep = "\t",
+              row.names = F,
+              quote = F)
+
+de_genes_f$RNA[de_genes_f$RNA$gene %in% converted_genes$HGNC.symbol, ]
+
+de_genes$RNA[de_genes$RNA$gene %in% converted_genes$HGNC.symbol, ] %>%
+  dplyr::fil
 
 
 library(progeny)

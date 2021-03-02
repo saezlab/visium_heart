@@ -15,7 +15,7 @@ library(tidyverse)
 deconv_col <- "deconv_state"
 
 # Putative CM states
-scell_data <- readRDS("./visium_results_manuscript/ct_data/snRNA.Rds")
+scell_data <- readRDS("./visium_results_manuscript/ct_data/cardio_snRNA.Rds")
 vars_to_transfer <- "States"
 scell_data_meta <- scell_data@meta.data %>%
   rownames_to_column("cell_id") %>% 
@@ -26,8 +26,7 @@ scell_data_meta <- scell_data@meta.data %>%
 scell_data_meta_cm <- scell_data_meta
 
 # Putative fibro states
-scell_data <- readRDS("./visium_results_manuscript/ct_data/fibroblasts_states.rds")
-scell_data$States <- paste0("FB", scell_data$opt_state)
+scell_data <- readRDS("./visium_results_manuscript/ct_data/fibro_coembd/fibroblasts_states.rds")
 vars_to_transfer <- "States"
 scell_data_meta <- scell_data@meta.data %>%
   rownames_to_column("cell_id") %>% 
