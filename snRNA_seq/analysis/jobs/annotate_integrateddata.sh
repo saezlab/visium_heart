@@ -12,7 +12,7 @@ conda activate scell_analysis;
 cd /net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions;
 $CONDA_PREFIX/bin/Rscript annotate_object.R \
         --data_path "/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/results/integration/integrated_data.rds" \
-        --dictionary_path "/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/markers/test_annotations.txt" \
+        --dictionary_path "/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/markers/test_annotations_v2.txt" \
         --object_id "opt_clust_integrated" \
         --dictionary_id "opt_clust_integrated" \
         --new_variable "cell_type" \

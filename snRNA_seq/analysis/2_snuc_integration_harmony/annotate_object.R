@@ -70,11 +70,14 @@ meta_data[, object_id] <- as.numeric(as.character(meta_data[,object_id] ))
 # Here I filter for clusters with annotation
 true_ix <- meta_data[, object_id] %in% annotation_data[, dictionary_id]
 scell_obj <- scell_obj[, true_ix]
-meta_data <- meta_data[true_ix ,]
+
+#Repeat the meta data
+meta_data <- scell_obj@meta.data
+# I assume it will always be a numeric cluster label
+meta_data[, object_id] <- as.numeric(as.character(meta_data[,object_id] ))
 
 # Left-join
 merge_conditional <- set_names(dictionary_id,object_id)
-
 meta_data <- left_join(meta_data,
                        annotation_data,
                        by = merge_conditional)

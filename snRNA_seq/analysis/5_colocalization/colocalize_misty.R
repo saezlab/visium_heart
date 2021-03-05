@@ -29,7 +29,7 @@ run_colocalization <- function(slide, assay, useful_features, out_label) {
                       "juxta" = 5,
                       "para" = 10)
   
-  misty_out <- paste0("./visium_results_manuscript/colocalization/", 
+  misty_out <- paste0("./visium_results_manuscript/colocalization/mjr_", 
                       out_label, "_", assay)
   
   run_misty_seurat(visium.slide = slide,
@@ -58,7 +58,7 @@ misty_outs <- map(slide_files, function(slide_file){
   assay <- assay_label
   DefaultAssay(slide) <- assay
   useful_features <- rownames(slide)
-  useful_features <- useful_features[!grepl("state-CM1", useful_features)]
+  useful_features <- useful_features[!grepl("state-cardiomyocytes", useful_features)]
   
   mout <- run_colocalization(slide = slide,
                      useful_features = useful_features,
@@ -68,11 +68,6 @@ misty_outs <- map(slide_files, function(slide_file){
   return(mout)
   
 })
-
-misty_outs <- list.files("./visium_results_manuscript/colocalization/")
-
-misty_outs <- paste0("./visium_results_manuscript/colocalization/",
-                     misty_outs[grepl("spotlight", misty_outs)])
 
 misty_res <- MISTy::collect_results(unlist(misty_outs))
 

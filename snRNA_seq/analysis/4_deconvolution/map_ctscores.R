@@ -1,18 +1,21 @@
 library(Seurat)
 library(tidyverse)
 
-deconv_mats <- list.files("./visium_results_manuscript/deconvolution/spotlight/")
+deconv_mats_path <- "./visium_results_manuscript/deconvolution/spotlight_mjr/"
+slide_files_path <- "./visium_results_manuscript/processed_visium/"
+
+deconv_mats <- list.files(deconv_mats_path)
 deconv_mats <- deconv_mats[grepl(".rds",deconv_mats)]
 
-slide_files <- list.files("./visium_results_manuscript/processed_visium/")
+slide_files <- list.files(slide_files_path)
 
 data_df <- tibble(ct_mat = sort(deconv_mats),
                   slide = sort(slide_files))
 
-data_df$ct_mat = paste0("./visium_results_manuscript/deconvolution/spotlight/", 
+data_df$ct_mat = paste0(deconv_mats_path, 
                         data_df$ct_mat)
 
-data_df$slide = paste0("./visium_results_manuscript/processed_visium/", 
+data_df$slide = paste0(slide_files_path, 
                         data_df$slide)
 
 printCT <- function(ct_mat, slide_file, features = c("state-CM1", 
@@ -67,15 +70,15 @@ dev.off()
 
 data_df <- data_df %>%
   dplyr::mutate(cm_plts = map2(ct_mat,slide, printCT, features = c("state-adipocytes",
+                                                                   "state-cardiomyocytes",
+                                                                   "state-fibroblasts",
                                                                    "state-endothelial-cells",
-                                                                   "state-immune",
                                                                    "state-lymphatic-endo",
-                                                                   "state-monocytes",
-                                                                   "state-neuronal",
+                                                                   "state-macrophages",
                                                                    "state-pericytes",
                                                                    "state-t-cells")))
 
-pdf("./visium_results_manuscript/deconvolution/spotlight_rest.pdf", height = 8, width = 10)
+pdf("./visium_results_manuscript/deconvolution/spotlight_mjr.pdf", height = 8, width = 10)
 
 walk(data_df$cm_plts, function(x) { 
   

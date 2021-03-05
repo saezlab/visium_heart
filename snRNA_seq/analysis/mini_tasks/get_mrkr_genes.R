@@ -11,19 +11,29 @@ degs <- readRDS("./visium_results_manuscript/integration/integrated_data_degs.rd
 degs <- degs$RNA %>%
   dplyr::mutate(specificity = pct.1 - pct.2) %>%
   arrange(cluster, p_val_adj, -specificity) %>%
-  dplyr::filter(avg_logFC > 1) %>%
+  dplyr::filter(avg_logFC > 0.5) %>%
   arrange(cluster, -specificity) %>%
   group_by(cluster) %>%
-  dplyr::slice(1:15) %>%
+  dplyr::slice(1:20) %>%
   write.table(file = "./visium_results_manuscript/integration/integrated_data_mrkr_genes.txt",
               sep = "\t",
               row.names = F, 
               col.names = T,
               quote = F)
 
-degs %>%
-  dplyr::filter(cluster == 9) 
-
+degs <- degs$RNA %>%
+  dplyr::mutate(specificity = pct.1 - pct.2) %>%
+  arrange(cluster, p_val_adj, -specificity) %>%
+  dplyr::filter(avg_logFC > 0.5) %>%
+  arrange(cluster, -specificity) %>%
+  group_by(cluster) %>%
+  dplyr::slice(1:20) %>%
+  dplyr::filter(cluster == 7) %>%
+  write.table(file = "./visium_results_manuscript/integration/integrated_data_mrkr_genes_clust7.txt",
+              sep = "\t",
+              row.names = F, 
+              col.names = T,
+              quote = F)
 
 
 

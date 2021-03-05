@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
-
+#!/usr/bin/env python
+# coding: utf-8
 import sys
 import scanpy as sc
 import anndata
@@ -30,7 +29,7 @@ regression_model_output = 'rmodel/RegressionGeneBackgroundCoverageTorch_16covari
 reg_path = f'{results_folder}{regression_model_output}/'
 sample_names = ["157771", "157772", "157775", "157777", "157779", "157781", "157782", "157785"]
 
-# Reading and analyzing visium data
+# Function to import a single slide
 def read_and_qc(sample_name, path=sp_data_folder + 'rawdata/'):
     r""" This function reads the data for one 10X spatial experiment into the anndata object.
     It also calculates QC metrics. Modify this function if required by your workflow.
@@ -43,9 +42,9 @@ def read_and_qc(sample_name, path=sp_data_folder + 'rawdata/'):
                            count_file='filtered_feature_bc_matrix.h5', load_images=True)
     adata.obs['sample'] = sample_name
     adata.var['SYMBOL'] = adata.var_names
-    adata.var.rename(columns={'gene_ids': 'ENSEMBL'}, inplace=True)
-    adata.var_names = adata.var['ENSEMBL']
-    adata.var.drop(columns='ENSEMBL', inplace=True)
+    #adata.var.rename(columns={'gene_ids': 'ENSEMBL'}, inplace=True)
+    #adata.var_names = adata.var['ENSEMBL']
+    #adata.var.drop(columns='ENSEMBL', inplace=True)
 
     # Calculate QC metrics
     sc.pp.calculate_qc_metrics(adata, inplace=True)
@@ -54,86 +53,49 @@ def read_and_qc(sample_name, path=sp_data_folder + 'rawdata/'):
 
     # add sample name to obs names
     adata.obs["sample"] = [str(i) for i in adata.obs['sample']]
-    adata.obs_names = adata.obs["sample"]                           + '_' + adata.obs_names
+    adata.obs_names = adata.obs["sample"] + '_' + adata.obs_names
     adata.obs.index.name = 'spot_id'
 
     return adata
 
 
-# Read the data into anndata objects
-slides = []
-for i in sample_names:
-    slides.append(read_and_qc(i, path=sp_data_folder))
-
-# Combine anndata objects together
-adata = slides[0].concatenate(
-    slides[1:],
-    batch_key="sample",
-    uns_merge="unique",
-    batch_categories=sample_names,
-    index_unique=None
-)
-
-adata.var["duplicated"] = adata.var['SYMBOL'].duplicated(keep = "first")
-adata = adata[:, ~adata.var['duplicated'].values]
-adata.var_names = adata.var['SYMBOL']
-
-# In[ ]:
-
-# mitochondria-encoded (MT) genes should be removed for spatial mapping
-adata.obsm['mt'] = adata[:, adata.var['mt'].values].X.toarray()
-adata = adata[:, ~adata.var['mt'].values]
-
-
-# In[ ]:
-
-adata_vis = adata.copy()
-adata_vis.raw = adata_vis
-
-
-# In[ ]:
-
-
-## snRNAseq reference (raw counts)
+# First generate the reference data frame
 adata_snrna_raw = sc.read(f'{reg_path}sc.h5ad')
-
-
-# In[ ]:
-
-
 # Column name containing cell type annotations
 covariate_col_names = 'cell_type'
-
 # Extract a pd.DataFrame with signatures from anndata object
 inf_aver = adata_snrna_raw.raw.var.copy()
 inf_aver = inf_aver.loc[:, [f'means_cov_effect_{covariate_col_names}_{i}' for i in adata_snrna_raw.obs[covariate_col_names].unique()]]
 from re import sub
 inf_aver.columns = [sub(f'means_cov_effect_{covariate_col_names}_{i}', '', i) for i in adata_snrna_raw.obs[covariate_col_names].unique()]
 inf_aver = inf_aver.iloc[:, inf_aver.columns.argsort()]
-
 # normalise by average experiment scaling factor (corrects for sequencing depth)
 inf_aver = inf_aver * adata_snrna_raw.uns['regression_mod']['post_sample_means']['sample_scaling'].mean()
 # eliminate duplicates in inf aver too just in case
 x = pd.Series([i for i in inf_aver.index.values]) 
 inf_aver = inf_aver.iloc[~x.duplicated(keep = "first").values,]
 
-# now we don't need to keep the scRNA-seq data set and a list with slides in memory
-del adata_snrna_raw, slides
+del adata_snrna_raw
 gc.collect()
 
-
-# In[ ]:
-
-
-sc.settings.set_figure_params(dpi = 100, color_map = 'viridis', dpi_save = 100,
-                              vector_friendly = True, format = 'pdf',
-                              facecolor='white')
+# Now do the whole pipeline per slide
 
 for s in sample_names:
     
     print(s)
     
-    adata_vis_s = adata_vis[adata_vis.obs['sample'].isin([s]),:]
+    adata = read_and_qc(s, path = sp_data_folder)
+    
+    #adata stuff
+    adata.var["duplicated"] = adata.var['SYMBOL'].duplicated(keep = "first")
+    adata = adata[:, ~adata.var['duplicated'].values]
+    
+    # mitochondria-encoded (MT) genes should be removed for spatial mapping
+    adata.obsm['mt'] = adata[:, adata.var['mt'].values].X.toarray()
+    adata = adata[:, ~adata.var['mt'].values]
+    
+    adata_vis_s = adata.copy()
+    adata_vis_s.raw = adata_vis_s
     
     r = cell2location.run_cell2location(
 
@@ -161,7 +123,7 @@ for s in sample_names:
 
 
       export_args={'path': results_folder, # path where to save results
-                   'run_name_suffix': s # optinal suffix to modify the name the run
+                   'run_name_suffix': "_" + s # optinal suffix to modify the name the run
                   },
 
       model_kwargs={ # Prior on the number of cells, cell types and co-located groups

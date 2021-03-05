@@ -1,9 +1,12 @@
 # Copyright (c) [2021] [Ricardo O. Ramirez Flores]
 # roramirezf@uni-heidelberg.de
 
-#' Map shared factors - In theory you already have the counts in the slide objects
+#' Map shared factors - In theory you already have the counts in the slide objects after
+#' running single_nmf
 
-all_nmf_folder <- "./visium_results_manuscript/colocalization/"
+library(tidyverse)
+
+all_nmf_folder <- "./visium_results_manuscript/colocalization/spotlight_mjr_nmf/"
 nmf_res <- list.files(all_nmf_folder)[grepl("[.]rds",list.files(all_nmf_folder))]
 nmf_id <- set_names(gsub("[.]rds", "", nmf_res))
   
