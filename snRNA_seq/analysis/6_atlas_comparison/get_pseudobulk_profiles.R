@@ -17,7 +17,7 @@ option_list <- list(
               action ="store", 
               default = NULL, 
               type = 'character',
-              help = "path where the folder with a collection of Seurat objects is"),
+              help = "path where the Seurat object to pseudobulk is"),
   make_option(c("--vars"), 
               action = "store", 
               default = NULL, 
@@ -60,7 +60,7 @@ get_sample_pseudo <- function(slide_file, vars) {
                          ids = slide@meta.data[, x])
   })
   
-  bulk_p_data[["annotations"]] <- slide@meta.data[,vars]
+  bulk_p_data[["annotations"]] <- slide@meta.data
   
   return(bulk_p_data)
 }
