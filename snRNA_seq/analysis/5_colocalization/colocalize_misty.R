@@ -5,7 +5,6 @@
 library(tidyverse)
 library(Seurat)
 library(MISTy)
-library(future) 
 source("./visium/visiumtools/pipelines.R")
 
 # Pipeline definition:
@@ -44,10 +43,11 @@ run_colocalization <- function(slide, assay, useful_features, out_label) {
 }
 
 # Main -----------------------------------
-
 slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
 slide_files <- list.files(slide_files_folder)
 slide_ids <- gsub("[.]rds", "", slide_files)
+
+# Spotlight
 assay_label <- "spotlight"
 
 misty_outs <- map(slide_files, function(slide_file){
@@ -77,5 +77,36 @@ MISTy::plot_view_contributions(misty_res)
 MISTy::plot_interaction_heatmap(misty_res, "intra", cutoff = 0.5)
 MISTy::plot_interaction_heatmap(misty_res, "juxta_5", cutoff = 0.5)
 MISTy::plot_interaction_heatmap(misty_res, "para_10", cutoff = 0.5)
+dev.off()
+
+# cell2location
+
+assay_label <- "c2l"
+
+misty_outs <- map(slide_files, function(slide_file){
+  print(slide_file)
+  # Read spatial transcriptomics data
+  slide_id <- gsub("[.]rds", "", slide_file)
+  slide <- readRDS(paste0(slide_files_folder, slide_file))
+  assay <- assay_label
+  DefaultAssay(slide) <- assay
+  useful_features <- rownames(slide)
+  mout <- run_colocalization(slide = slide,
+                             useful_features = useful_features,
+                             out_label = slide_id,
+                             assay = assay)
+  
+  return(mout)
+  
+})
+
+misty_res <- MISTy::collect_results(unlist(misty_outs))
+
+pdf("./visium_results_manuscript/colocalization/misty_colocalization_c2l.pdf")
+MISTy::plot_improvement_stats(misty_res)
+MISTy::plot_view_contributions(misty_res)
+MISTy::plot_interaction_heatmap(misty_res, "intra", cutoff = 0)
+MISTy::plot_interaction_heatmap(misty_res, "juxta_5", cutoff = 0)
+MISTy::plot_interaction_heatmap(misty_res, "para_10", cutoff = 0)
 dev.off()
 

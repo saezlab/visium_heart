@@ -6,13 +6,7 @@
 
 library(tidyverse)
 
-all_nmf_folder <- "./visium_results_manuscript/colocalization/spotlight_mjr_nmf/"
-nmf_res <- list.files(all_nmf_folder)[grepl("[.]rds",list.files(all_nmf_folder))]
-nmf_id <- set_names(gsub("[.]rds", "", nmf_res))
-  
-slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
-slide_files <- list.files(slide_files_folder)
-
+# Function to map factors to slides from a joint NMF
 assign_sharedfactors <- function(slide_file, nmf_res_file, alias_nmf) {
   print(slide_file)
   # Read spatial transcriptomics data
@@ -48,6 +42,15 @@ assign_sharedfactors <- function(slide_file, nmf_res_file, alias_nmf) {
   return(all_factors_plts)
 }
 
+#MAIN
+# Spotlight
+all_nmf_folder <- "./visium_results_manuscript/colocalization/spotlight_mjr_nmf/"
+nmf_res <- list.files(all_nmf_folder)[grepl("[.]rds",list.files(all_nmf_folder))]
+nmf_id <- set_names(gsub("[.]rds", "", nmf_res))
+
+slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+slide_files <- list.files(slide_files_folder)
+
 k_res <- walk(nmf_id, function(x){ 
   
   print(x)
@@ -69,8 +72,53 @@ k_res <- walk(nmf_id, function(x){
                  names_to = "feature", 
                  values_to = "loading")
   
-  loadingplts <- ggplot(factor_loadings, aes(fill = loading, x = factor, y = feature)) +
-    geom_tile() +
+  loadingplts <- ggplot(factor_loadings, aes(size = loading, x = factor, y = feature)) +
+    geom_point() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+  pdf(file = paste0(all_nmf_folder,x,".pdf"), height = 15, width = 15)
+  
+  print(loadingplts)
+  
+  walk(factor_map_plts, print)
+  
+  dev.off()
+  
+})
+
+# cell2location
+
+# Spotlight
+all_nmf_folder <- "./visium_results_manuscript/colocalization/c2l_mjr_nmf/colocalization/"
+nmf_res <- list.files(all_nmf_folder)[grepl("[.]rds",list.files(all_nmf_folder))]
+nmf_id <- set_names(gsub("[.]rds", "", nmf_res))
+
+slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+slide_files <- list.files(slide_files_folder)
+
+k_res <- walk(nmf_id, function(x){ 
+  
+  print(x)
+  nmf_res_file <- paste0(x,".rds")
+  
+  factor_map_plts <- map(slide_files, 
+                         assign_sharedfactors, 
+                         alias_nmf = x, 
+                         nmf_res_file = nmf_res_file)
+  
+  # Read NMF results ------------------------------------------------
+  nmf_res_list <- readRDS(paste0(all_nmf_folder, nmf_res_file))
+  
+  # Plotting loadings ------------------------------------------------
+  factor_loadings <- nmf_res_list$factor_loadings %>%
+    as.data.frame() %>%
+    rownames_to_column("factor") %>%
+    pivot_longer(-factor, 
+                 names_to = "feature", 
+                 values_to = "loading")
+  
+  loadingplts <- ggplot(factor_loadings, aes(size = loading, x = factor, y = feature)) +
+    geom_point() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
   
   pdf(file = paste0(all_nmf_folder,x,".pdf"), height = 15, width = 15)
@@ -85,10 +133,36 @@ k_res <- walk(nmf_id, function(x){
 
 
 
+k_res <- map(nmf_id, function(x){ 
+  
+  print(x)
+  nmf_res_file <- paste0(x,".rds")
+  # Read NMF results ------------------------------------------------
+  nmf_res_list <- readRDS(paste0(all_nmf_folder, nmf_res_file))
+  
+  # Plotting loadings ------------------------------------------------
+  factor_loadings <- nmf_res_list$factor_loadings %>%
+    as.data.frame() %>%
+    rownames_to_column("factor") %>%
+    pivot_longer(-factor, 
+                 names_to = "feature", 
+                 values_to = "loading") %>%
+    mutate(loading = ifelse(loading == 0, NA, loading))
+  
+  loadingplts <- ggplot(factor_loadings, aes(size = loading, 
+                                             color = loading,
+                                             x = factor, y = feature)) +
+    geom_point() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    theme_classic()
+  
+})
 
+pdf(file = paste0(all_nmf_folder,"c2l_all_factorloadings.pdf"), height = 4, width = 5)
 
+walk(k_res, print)
 
-
+dev.off()
 
 
 

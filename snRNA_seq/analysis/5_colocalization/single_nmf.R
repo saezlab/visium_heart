@@ -139,4 +139,76 @@ walk(c(3, 4, 5, 6), function(k) {
   
 })
 
+# Get slides and deconvolution matrices from cell2location (states)
+deconv_mats_folder <- "./visium_results_manuscript/deconvolution/c2l_states/location_models/density_tables_rds/"
+slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+out_slides_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+deconv_mats <- list.files(deconv_mats_folder)
+deconv_mats <- deconv_mats[grepl(".rds",deconv_mats)]
+slide_files <- list.files(slide_files_folder)
+data_df <- tibble(ct_mat = paste0(deconv_mats_folder, sort(deconv_mats)),
+                  slide_file = paste0(slide_files_folder, sort(slide_files)),
+                  out_file = paste0(out_slides_folder, sort(slide_files)))
+
+
+walk(c(4, 5, 6, 7), function(k) { 
+  
+  print(k)
+  
+  all_plts <- pmap(data_df, 
+                   colocalize_cts, 
+                   k = k, 
+                   alias = "c2l_states",
+                   alias_nmf = "c2l_nmf_states")
+  
+  pdf(file = paste0("./visium_results_manuscript/deconvolution/c2l_states/colocalization/single_colocalization_",k,".pdf"), 
+      height = 12, 
+      width = 12)
+  
+  walk(all_plts, function(x) {
+    
+    walk(x, print)
+    
+  })
+  
+  dev.off()
+  
+})
+
+# Get slides and deconvolution matrices from cell2location (states)
+deconv_mats_folder <- "./visium_results_manuscript/deconvolution/c2l_statescollapsed//location_models/density_tables_rds/"
+slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+out_slides_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+deconv_mats <- list.files(deconv_mats_folder)
+deconv_mats <- deconv_mats[grepl(".rds",deconv_mats)]
+slide_files <- list.files(slide_files_folder)
+data_df <- tibble(ct_mat = paste0(deconv_mats_folder, sort(deconv_mats)),
+                  slide_file = paste0(slide_files_folder, sort(slide_files)),
+                  out_file = paste0(out_slides_folder, sort(slide_files)))
+
+
+walk(c(4, 5, 6, 7), function(k) { 
+  
+  print(k)
+  
+  all_plts <- pmap(data_df, 
+                   colocalize_cts, 
+                   k = k, 
+                   alias = "c2l_statesred",
+                   alias_nmf = "c2l_nmf_statesred")
+  
+  pdf(file = paste0("./visium_results_manuscript/deconvolution/c2l_statescollapsed/colocalization/single_colocalization_",k,".pdf"), 
+      height = 12, 
+      width = 12)
+  
+  walk(all_plts, function(x) {
+    
+    walk(x, print)
+    
+  })
+  
+  dev.off()
+  
+})
+
 
