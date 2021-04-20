@@ -16,6 +16,7 @@ library(tidyverse)
 library(Seurat)
 library(scDblFinder)
 library(cluster)
+library(cowplot)
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(
@@ -23,7 +24,7 @@ option_list <- list(
               action = "store_true", 
               default = TRUE, 
               type = 'logical',
-              help = "is the path added a folder with structure ./%sample/filtered_feature_bc_matrix"),
+              help = "is the path added a folder with structure ./%sample(/outs)/filtered_feature_bc_matrix"),
   make_option(c("--id"), 
               action ="store", 
               default = "default", 
@@ -43,7 +44,12 @@ option_list <- list(
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "where to save the rds objects")
+              help = "where to save the fig objects"),
+  make_option(c("--outs_structure"), 
+              action = "store", 
+              default = TRUE, 
+              type = 'logical',
+              help = "is the path added a folder with structure ./%sample/outs/filtered_feature_bc_matrix")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -59,7 +65,11 @@ for(user_input in names(opt)) {
 # This is an option to give a folder and parse all the files to process --------------------------------
 if(folder) {
   sample_names <- list.files(path)
-  slide_files <- paste0(path,sample_names,"/filtered_feature_bc_matrix")
+  if(outs_structure) {
+    slide_files <- paste0(path,sample_names,"/outs/filtered_feature_bc_matrix")
+  } else {
+    slide_files <- paste0(path,sample_names,"/filtered_feature_bc_matrix")
+  }
 } else {
   sample_names <- id
   slide_files <- path
@@ -99,6 +109,28 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   # I will take the 1%
   nfeature_filter = quantile(sample_seurat$nFeature_RNA,
                              1-0.01)
+  
+  
+  # Here we make a collection of plots needed ------------------------------
+  # N features and ncount
+  
+  filt_p1 <- sample_seurat@meta.data %>%
+    ggplot(aes(x = nCount_RNA, y = nFeature_RNA)) +
+    geom_point() +
+    theme_classic() +
+    geom_hline(yintercept = 200) + 
+    geom_hline(yintercept = nfeature_filter) +
+    geom_vline(xintercept = 300) +
+    ggtitle(paste0("ncells ", ncol(sample_seurat)))
+  
+  filt_p2 <- sample_seurat@meta.data %>%
+    ggplot(aes(x = nCount_RNA, y = percent.mt)) +
+    geom_point() +
+    theme_classic() +
+    geom_hline(yintercept = 5) + 
+    geom_vline(xintercept = 300) +
+    ggtitle(paste0("ncells ", ncol(sample_seurat)))
+  
   # Get mitochondrial genes
   sample_seurat <- subset(sample_seurat, 
                           subset = nFeature_RNA > 200 & 
@@ -194,7 +226,8 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   # Plot final resolution
   
-  final_embedding <- DimPlot(sample_seurat, group.by = "opt_clust")
+  final_embedding <- DimPlot(sample_seurat, group.by = "opt_clust") +
+    ggtitle(paste0("n cells ", ncol(sample_seurat)))
   
   print("Generating outputs")
 
@@ -202,10 +235,11 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   Idents(sample_seurat) = "opt_clust"
   saveRDS(sample_seurat, file = out_file)
   
-  # Plot QC
+  # Plot QC files
   
   pdf(file = out_fig_file, width = 15, height = 15)
   
+  plot(cowplot::plot_grid(nrow = 1, ncol = 2, filt_p1, filt_p2))
   plot(quality_plt)
   plot(quality_plt_bis)
   plot(final_embedding)
