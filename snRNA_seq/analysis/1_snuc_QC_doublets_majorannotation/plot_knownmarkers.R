@@ -16,7 +16,7 @@ option_list <- list(
               action = "store_true", 
               default = FALSE, 
               type = 'logical',
-              help = "is the path added a folder with structure ./%sample/filtered_feature_bc_matrix"),
+              help = "is the path added a folder with structure ./%sample.rds"),
   make_option(c("--used_assay"), 
               action ="store", 
               default = "RNA", 
@@ -70,7 +70,7 @@ param_df <- tibble(slide_file = slide_files_path,
 # Read marker list ------------------------------------------------------------------------------------
 
 # Gene markers from Christoph
-markers_stable <- (read.table("/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/markers/Kuppe_def.txt",
+markers_stable <- (read.table("/beegfs/work/hd_wh241/visiumMI_revisions/markers/Kuppe_def.txt",
                               sep = "\t",stringsAsFactors = F,
                               header = T))[,c(1,2)]
 
