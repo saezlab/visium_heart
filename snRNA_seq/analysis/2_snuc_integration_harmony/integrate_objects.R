@@ -10,7 +10,6 @@ library(tidyverse)
 library(Seurat)
 library(harmony)
 library(cluster)
-source("./utils/sc_plts.R")
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(
@@ -28,7 +27,12 @@ option_list <- list(
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "where to save the plots objects")
+              help = "where to save the plots objects"),
+  make_option(c("--def_assay"), 
+              action= "store", 
+              default = "RNA", 
+              type = 'character',
+              help = "default assays to integrate")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -49,10 +53,13 @@ slide_files_path <- set_names(paste0(path,slide_files), gsub(pattern = "[.]rds",
 
 slide_data <- map(slide_files_path, readRDS)
 
-# Create merged object
+# Create merged object ---------------------------------
 integrated_data <- reduce(slide_data,
                           merge,
                           merge.data = TRUE)
+
+# Default assay ---------------------------------------
+DefaultAssay(integrated_data) <- def_assay
 
 # Process it before integration -----------------------
 integrated_data <- integrated_data %>%
@@ -72,7 +79,8 @@ original_pca_plt <- DimPlot(object = integrated_data,
 # Integrate the data -----------------------
 integrated_data <- RunHarmony(integrated_data, 
                               "orig.ident", 
-                              plot_convergence = TRUE)
+                              plot_convergence = TRUE,
+                              assay.use = def_assay)
 
 # Corrected dimensions -----------------------
 corrected_pca_plt <- DimPlot(object = integrated_data, 
@@ -91,7 +99,7 @@ integrated_data <- FindNeighbors(integrated_data,
                                  reduction = "harmony", 
                                  dims = 1:30)
 
-seq_res <- seq(0.1, 1, 0.1)
+seq_res <- seq(0.2, 1, 0.1)
 
 integrated_data <- FindClusters(integrated_data,
                                 resolution = seq_res,
@@ -101,7 +109,7 @@ integrated_data <- FindClusters(integrated_data,
 cell_dists <- dist(integrated_data@reductions$harmony@cell.embeddings,
                    method = "euclidean")
 
-cluster_info <- integrated_data@meta.data[,grepl("RNA_snn_res",
+cluster_info <- integrated_data@meta.data[,grepl(paste0(DefaultAssay(integrated_data),"_snn_res"),
                                                colnames(integrated_data@meta.data))] %>%
   dplyr::mutate_all(as.character) %>%
   dplyr::mutate_all(as.numeric)
@@ -115,8 +123,14 @@ integrated_data[["opt_clust_integrated"]] <- integrated_data[[names(which.max(si
 
 Idents(integrated_data) = "opt_clust_integrated"
 
-# Save object ------------------------------------------------------
+# Reduce meta-data -------------------------------------------------------------------------
+spam_cols <- grepl(paste0(DefaultAssay(integrated_data), "_snn_res"),
+                   colnames(integrated_data@meta.data)) |
+  grepl("seurat_clusters",colnames(integrated_data@meta.data))
 
+integrated_data@meta.data <- integrated_data@meta.data[,!spam_cols]
+
+# Save object ------------------------------------------------------
 saveRDS(integrated_data, file = out_file)
 
 # Print QC file ------------------------------------------------------
