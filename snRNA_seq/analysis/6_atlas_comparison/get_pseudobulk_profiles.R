@@ -27,7 +27,17 @@ option_list <- list(
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "where to save the rds objects")
+              help = "where to save the rds objects"),
+  make_option(c("--collapsed"), 
+              action= "store", 
+              default = "n", 
+              type = 'character',
+              help = "should you create combinations of vars?"),
+  make_option(c("--def_assay"), 
+              action= "store", 
+              default = "RNA", 
+              type = 'character',
+              help = "where should we take the counts")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -50,15 +60,25 @@ vars <- set_names(unlist(strsplit(vars, ",")))
 
 # Read data and create pseudobulk profiles at two levels ----------------------------------
 
-get_sample_pseudo <- function(slide_file, vars) {
+get_sample_pseudo <- function(slide_file, vars, group_vars = "n") {
   
   slide <- readRDS(slide_file)
   
-  # Creates pseudobulk profile for each var
-  bulk_p_data <- map(vars, function(x) { 
-    sumCountsAcrossCells(x = as.matrix(slide@assays$RNA@counts),
-                         ids = slide@meta.data[, x])
-  })
+  if(group_vars == "n") {
+    
+    # Creates pseudobulk profile for each var
+    bulk_p_data <- map(vars, function(x) { 
+      sumCountsAcrossCells(x = as.matrix(slide@assays[[def_assay]]@counts),
+                           ids = slide@meta.data[, x])
+    })
+    
+  } else { 
+    
+    bulk_p_data <- list()
+    bulk_p_data[["gex"]] <- sumCountsAcrossCells(x = as.matrix(slide@assays[[def_assay]]@counts),
+                                                 ids = DataFrame(slide@meta.data[, vars]))
+    
+  }
   
   bulk_p_data[["annotations"]] <- slide@meta.data
   
@@ -67,82 +87,8 @@ get_sample_pseudo <- function(slide_file, vars) {
 
 pseudobulk_profiles <- map(set_names(slide_files), 
                            get_sample_pseudo, 
-                           vars = vars)
+                           vars = vars,
+                           group_vars = "collapsed")
 
 saveRDS(pseudobulk_profiles, 
         file = out_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
