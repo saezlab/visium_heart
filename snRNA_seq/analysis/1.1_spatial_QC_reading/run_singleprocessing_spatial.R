@@ -1,0 +1,246 @@
+# Copyright (c) [2021] [Ricardo O. Ramirez Flores]
+# roramirezf@uni-heidelberg.de
+
+#' In this script we run the basic Seurat pipeline for spatial transcriptomics
+#' folder
+#' |
+#' sample---
+#'          |
+#'          ---spatial
+#'          ---filtered_feature_bc_matrix.h5
+#' 1) Read 10x files
+#' 2) Normalization with cpm and SCT
+#' 3) Funcomics
+#' 4) Clustering
+#' 5) QC plots
+
+library(optparse)
+library(tidyverse)
+library(Seurat)
+library(cluster)
+library(cowplot)
+source("./utils/funcomics.R")
+
+# Argument definition ---------------------------------------------------------------------------------
+option_list <- list(
+  make_option(c("--folder"), 
+              action = "store_true", 
+              default = TRUE, 
+              type = 'logical',
+              help = "is the path added a folder with structure ./%sample(/outs)/filtered_feature_bc_matrix"),
+  make_option(c("--id"), 
+              action ="store", 
+              default = "default", 
+              type = 'character',
+              help = "name of the sample if single path provided"),
+  make_option(c("--path"), 
+              action ="store", 
+              default = NULL, 
+              type = 'character',
+              help = "direct filtered_feature_bc_matrix file"),
+  make_option(c("--out_path"), 
+              action= "store", 
+              default = NULL, 
+              type = 'character',
+              help = "where to save the rds objects"),
+  make_option(c("--out_fig_path"), 
+              action= "store", 
+              default = NULL, 
+              type = 'character',
+              help = "where to save the fig objects")
+)
+
+# Parse the parameters ---------------------------------------------------------------------------------
+opt <- parse_args(OptionParser(option_list=option_list))
+
+cat("[INFO] Input parameters\n", file=stdout())
+for(user_input in names(opt)) {
+  if(user_input=="help") next;
+  cat(paste0("[INFO] ",user_input," => ",opt[[user_input]],"\n"),file = stdout())
+  assign(user_input,opt[[user_input]])
+}
+
+# This is an option to give a folder and parse all the files to process --------------------------------
+if(folder) {
+  sample_names <- list.files(path)
+  slide_files <- paste0(path,
+                        sample_names)
+  } else {
+  sample_names <- id
+  slide_files <- path
+}
+
+# Make data frame of parameters ------------------------------------------------------------------------
+param_df <- tibble(sample_name = sample_names,
+                   slide_file = slide_files,
+                   out_file = paste0(out_path, sample_names, ".rds"),
+                   out_fig_file_a = paste0(out_fig_path, sample_names, "_slideqc", ".jpeg"),
+                   out_fig_file_b = paste0(out_fig_path, sample_names, "_slideclustering", ".jpeg"))
+
+# Automatic processing of each data set --------------------------------
+
+process_data_visium <- function(sample_name, 
+                                slide_file, 
+                                out_file, 
+                                out_fig_file_a,
+                                out_fig_file_b) {
+  set.seed(17)
+  
+  print("Reading data")
+  
+  print(sample_name)
+  
+  sample_seurat <- Load10X_Spatial(data.dir = slide_file,
+                                   filter.matrix = TRUE)
+  
+  sample_seurat[["orig.ident"]] <- sample_name
+  
+  # Get mitochondrial genes percentage ------------------------------------------------
+  sample_seurat[["percent.mt"]] <- PercentageFeatureSet(sample_seurat, 
+                                                        pattern = "^MT-")
+  
+  # QC relationships -------------------------------------------------------------------
+  qc_p1 <- sample_seurat@meta.data %>%
+    ggplot(aes(x = nCount_Spatial, y = nFeature_Spatial)) +
+    geom_point() +
+    theme_classic() +
+    ggtitle(paste0("nspots ", ncol(sample_seurat)))
+  
+  qc_p2 <- sample_seurat@meta.data %>%
+    ggplot(aes(x = nCount_Spatial, y = percent.mt)) +
+    geom_point() +
+    theme_classic() +
+    ggtitle(paste0("nspots ", ncol(sample_seurat)))
+  
+  
+  qc_panel <- cowplot::plot_grid(qc_p1, qc_p2, ncol = 2, align = "hv")
+  
+  slide_qc_p <- SpatialFeaturePlot(sample_seurat,
+                                   features = c("nCount_Spatial", 
+                                                "nFeature_Spatial", 
+                                                "percent.mt"),
+                                   ncol = 3)
+  
+  qc_panel_a <- cowplot::plot_grid(qc_panel, slide_qc_p, 
+                                 nrow = 2, ncol = 1, 
+                                 rel_heights = c(0.5, 0.5))
+  
+  # Process the data --------------------------------------------------------------------
+  
+  # SCT transform normalization ---------------------------------------------------------
+  sample_seurat <- SCTransform(sample_seurat, 
+                               assay = "Spatial", 
+                               verbose = FALSE)
+  # cpm normalization ---------------------------------------------------------
+  sample_seurat <- NormalizeData(sample_seurat, 
+                                 normalization.method = 'LogNormalize', 
+                                 scale.factor = 10000, 
+                                 verbose = FALSE)
+  
+  # dimensionality reduction --------------------------------------------------
+  DefaultAssay(sample_seurat) <- "SCT"
+  
+  sample_seurat <- ScaleData(sample_seurat, 
+                             verbose = FALSE, 
+                             features = rownames(sample_seurat)) %>%
+    RunPCA() %>%
+    RunUMAP(reduction = 'pca', dims = 1:30, verbose = FALSE)
+  
+  # Optimize clustering --------------------------------------------------------------------
+  print("Optimizing clustering")
+  
+  sample_seurat <- FindNeighbors(sample_seurat, reduction = "pca", dims = 1:30)
+  
+  seq_res <- seq(0.3, 1, 0.1)
+  
+  sample_seurat <- FindClusters(sample_seurat, 
+                                resolution = seq_res,
+                                verbose = F)
+  
+  # Optimize ---------------------------------------------------------------------------------
+
+  cell_dists <- dist(sample_seurat@reductions$pca@cell.embeddings,
+                     method = "euclidean")
+  
+  cluster_info <- sample_seurat@meta.data[,grepl(paste0(DefaultAssay(sample_seurat), "_snn_res"),
+                                                 colnames(sample_seurat@meta.data))] %>%
+    dplyr::mutate_all(as.character) %>%
+    dplyr::mutate_all(as.numeric)
+  
+  silhouette_res <- apply(cluster_info, 2, function(x){
+    si <- silhouette(x, cell_dists)
+    mean(si[, 'sil_width'])
+  })
+  
+  sample_seurat[["opt_clust"]] <- sample_seurat[[names(which.max(silhouette_res))]]
+  
+  # Reduce meta-data -------------------------------------------------------------------------
+  spam_cols <- grepl(paste0(DefaultAssay(sample_seurat), "_snn_res"),
+                     colnames(sample_seurat@meta.data)) |
+    grepl("seurat_clusters",colnames(sample_seurat@meta.data))
+
+  sample_seurat@meta.data <- sample_seurat@meta.data[,!spam_cols]
+  
+  # Plot final cluster resolution --------------------------------------------------------------------
+  
+  final_embedding <- DimPlot(sample_seurat, group.by = "opt_clust") +
+    ggtitle(paste0("n spots ", 
+                   ncol(sample_seurat)))
+  
+  spatial_embedding <- SpatialDimPlot(sample_seurat,
+                                      group.by = "opt_clust",
+                                      label = TRUE, 
+                                      label.size = 0,
+                                      stroke = 0, 
+                                      label.box = F)
+  
+  qc_panel_b <- cowplot::plot_grid(final_embedding, spatial_embedding, ncol = 2)
+  
+  print("Adding funcomics")
+  
+  # Add funcomics assays -
+  # TF acts controlled by confidence lbls
+  # pathway acts (progeny) with the top param
+  sample_seurat <- add_funcomics(visium_slide = sample_seurat,
+                                   species = "human",
+                                   confidence_lbls = c("A","B","C","D"),
+                                   top = 500,
+                                   marker_dictionary = NULL,
+                                   module_name = NULL,
+                                   verbose = FALSE,
+                                   assay = "SCT")
+  
+  # Save data
+  print("saving object")
+  Idents(sample_seurat) = "opt_clust"
+  saveRDS(sample_seurat, file = out_file)
+  
+  # Plot QC files
+  print("plotting qc features")
+  
+  jpeg(file = out_fig_file_a, width = 1600, height = 1700)
+  plot(qc_panel_a)
+  dev.off()
+  
+  jpeg(file = out_fig_file_b, width = 1600, height = 800)
+  plot(qc_panel_b)
+  dev.off()
+  
+  print("finished")
+}
+
+# Main -----------------
+param_df <- param_df
+pwalk(param_df, process_data_visium)
+
+
+
+
+
+
+
+
+
+
+
+
