@@ -1,0 +1,515 @@
+---
+title: "Evaluate deconvolution of major cell-types"
+author: "Ricardo Ramirez"
+date: "3/8/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+```
+
+## Background
+
+Eight slides from four different functional regions were deconvoluted using cell2location and SPOTlight. Only major cell-types were queried and a unique reference was built for both approches. Details on the pipeline can be checked here <https://github.com/saezlab/visium_heart/tree/rna_seq_revisions/snRNA_seq/analysis/4_deconvolution>
+
+The main objective of this notebook is to compare the estimations of each method and estimate cell-type occupation distributions as well as spot occupation distributions
+
+```{r get_data, warning=F}
+# Get all data files
+slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
+slide_files <- list.files(slide_files_folder)
+slide_files_full <- paste0(slide_files_folder, 
+                           slide_files)
+slide_ids <- gsub("[.]rds", "", slide_files)
+
+# Patient annotation -------------------------------------------------------------------------
+condition_dictionary <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
+                                   sep = "\t", header = T) %>%
+  mutate_all(as.character) %>%
+  dplyr::select(Visium, New.Ids) %>%
+  dplyr::rename(slide = Visium,
+                patient = New.Ids)
+
+# Tibble of all data
+# c2l: cell2location
+# spotlight: spotlight
+
+deconv_res <- tibble("slide_path" = slide_files_full,
+                     "slide" = slide_ids) %>%
+  dplyr::mutate(deconv_mats = map(slide_path, function(x) {
+    
+    slide_obj <- readRDS(x)
+    
+    tibble("cell2location" = as.matrix(slide_obj[["c2l"]]@data) %>%
+             as.data.frame() %>%
+             rownames_to_column("cell_type") %>%
+             pivot_longer(-cell_type),
+           "spotlight" = as.matrix(slide_obj[["spotlight"]]@data) %>%
+             as.data.frame() %>%
+             rownames_to_column("cell_type") %>%
+             pivot_longer(-cell_type))
+    
+    
+  }))
+
+# Here I keep in long format c2l and spotlight runs for further filtering
+
+deconv_res <- deconv_res %>% 
+  dplyr::select(slide, deconv_mats) %>%
+  dplyr::mutate(spotlight = map(deconv_mats, ~ .x[["spotlight"]]),
+                cell2location = map(deconv_mats, ~ .x[["cell2location"]])) %>%
+  dplyr::select(slide, spotlight, cell2location) %>%
+  dplyr::left_join(condition_dictionary)
+
+```
+
+
+```{r, warning=F}
+joint_data <- deconv_res %>%
+  dplyr::select(patient, spotlight) %>%
+  unnest() %>%
+  dplyr::mutate(cell_type = gsub("state-", "", cell_type)) %>%
+  rename(slight_value = value) %>%
+  left_join(deconv_res %>%
+            dplyr::select(patient, cell2location) %>%
+            unnest() %>%
+            rename(c2l_value = value),
+            by = c("patient", 
+                   "cell_type",
+                   "name"))
+
+# Add c2l proportions ---------------------------------
+joint_data <- joint_data %>%
+  group_by(patient, name) %>%
+  dplyr::mutate(c2l_prop = c2l_value/(sum(c2l_value))) %>%
+  ungroup()
+
+```
+
+## Comparison of proportion estimations
+
+Cell2location seems to shrink more cells (higher ~ 0 counts)
+
+```{r, warning=F}
+hist(joint_data$c2l_prop, main = "cell2location distribution in all slides")
+```
+
+```{r, warning=F}
+hist(joint_data$slight_value, main = "SPOTlight distribution in all slides")
+```
+
+## Comparison of cell-type distributions
+
+Obvious shifts are observed. Cardiomyocytes and fibroblast having more occupation in c2l estimations which make more sense biologically (they are the major occupying cells).
+
+```{r, warning=F}
+joint_data %>%
+  dplyr::select(patient, cell_type,
+                slight_value, c2l_prop) %>%
+  pivot_longer(-c(patient, cell_type)) %>%
+  ggplot(aes(x = cell_type,
+             y = value,
+             fill = name)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 0,
+                                   vjust = 0.5))
+```
+
+## Correlation between estimations
+
+```{r, warning=F}
+rm(deconv_res)
+
+corr_data <- joint_data %>%
+  group_by(patient, cell_type) %>%
+  summarise(correlation = broom::tidy(cor.test(slight_value, 
+                                               c2l_value)))
+
+corr_data <- bind_cols(corr_data, 
+                       corr_data$correlation) %>%
+  dplyr::select(-correlation)
+
+cor_plot <- ggplot(corr_data, 
+                   aes(x = cell_type,
+                       y = estimate)) +
+  geom_boxplot() +
+  geom_jitter(aes(color = patient)) +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 0,
+                                   vjust = 0.5)) +
+  ylab("Pearson correlation")
+```
+
+Correlations among cell2location (densities) and spotlight are relatively low < 0.5 for most of the cell-types. P2_IZ seems to coincide less with the estimations.
+
+```{r, warning=F}
+print(cor_plot)
+```
+
+Does this hold with proportions?
+
+We observe a higher correlation between cell2location (proportions) and spotlight. Lower correlations are observed between cell-types with stronger shifts in the **Comparison of cell-type distributions** section.
+
+```{r, warning=F}
+corr_data <- joint_data %>%
+  group_by(patient, cell_type) %>%
+  summarise(correlation = broom::tidy(cor.test(slight_value, 
+                                               c2l_prop)))
+
+corr_data <- bind_cols(corr_data, 
+                       corr_data$correlation) %>%
+  dplyr::select(-correlation)
+
+
+cor_plot <- ggplot(corr_data, 
+                   aes(x = cell_type,
+                       y = estimate)) +
+  geom_boxplot() +
+  geom_jitter(aes(color = patient)) +
+  theme(axis.text.x = element_text(angle = 90,
+                                   hjust = 0,
+                                   vjust = 0.5)) +
+  ylab("Pearson correlation")
+
+print(cor_plot)
+
+```
+
+## Cell occupation
+
+To quantify how many different cell-types occupy in general the same spot we can binarize the estimations of both cell2location and spotlight
+
+```{r, warning=F}
+#Assuming 10 cells per spot, this represents 1 cell. We are working with nuclei here
+prop_cut <- 0.1
+
+joint_data <- joint_data %>%
+  dplyr::mutate(c2l_occupy = ifelse(c2l_prop >= prop_cut,
+                                    1,0),
+                slight_occupy = ifelse(slight_value >= prop_cut,
+                                    1,0))
+
+spot_occupancy <- joint_data %>%
+  group_by(patient, name) %>%
+  summarise(c2l_ncells = sum(c2l_occupy),
+            slight_ncells = sum(slight_occupy))
+```
+
+Number of different cell types occupying the spots cell2location
+
+```{r, warning=F}
+spot_occupancy %>%
+  ungroup() %>%
+  group_by(c2l_ncells) %>%
+  summarise(nspots = length(c2l_ncells)) %>%
+  ggplot(aes(x = c2l_ncells,
+             y = nspots)) +
+  geom_bar(stat = "identity")
+
+```
+
+Number of different cell types occupying the spots SPOTlight
+
+```{r, warning=F}
+spot_occupancy %>%
+  ungroup() %>%
+  group_by(slight_ncells) %>%
+  summarise(nspots = length(slight_ncells)) %>%
+  ggplot(aes(x = slight_ncells,
+             y = nspots)) +
+  geom_bar(stat = "identity")
+```
+
+**SPOTlight shifts the colocalization of cell types from 3 (cell2location) to 4.**
+
+## Correlation between cell-types?
+
+The question is if there are correlations between cell-types that are maintained between patients
+
+```{r, warning=F}
+cor_cells <- function(data, values) {
+  
+  cor_mat <- pivot_wider(data, 
+              names_from = cell_type, 
+              values_from = values) %>%
+    dplyr::select(-name) %>%
+    as.matrix() %>%
+    cor() %>%
+    as.data.frame() %>%
+    rownames_to_column("cellA") %>%
+    pivot_longer(-cellA, 
+                 names_to = "cellB",
+                 values_to = "cell_cor")
+  
+}
+
+c2l_cors <- joint_data %>%
+  dplyr::select(patient, 
+                cell_type, 
+                name, 
+                c2l_value) %>%
+  group_by(patient) %>%
+  nest() %>%
+  dplyr::mutate(cell_correlations = map(data, 
+                                        cor_cells, 
+                                        values = "c2l_value")) %>%
+  dplyr::select(patient, cell_correlations) %>%
+  unnest()
+
+c2l_cors_mod <- joint_data %>%
+  dplyr::select(patient, 
+                cell_type, 
+                name, 
+                c2l_value) %>%
+  dplyr::filter(! patient %in% c("P2_IZ", "P3_IZ", "P4_CR")) %>%
+  group_by(patient) %>%
+  nest() %>%
+  dplyr::mutate(cell_correlations = map(data, 
+                                        cor_cells, 
+                                        values = "c2l_value")) %>%
+  dplyr::select(patient, cell_correlations) %>%
+  unnest()
+
+slight_cors <- joint_data %>%
+  dplyr::select(patient, 
+                cell_type, 
+                name, 
+                slight_value) %>%
+  group_by(patient) %>%
+  nest() %>%
+  dplyr::mutate(cell_correlations = map(data, 
+                                        cor_cells, 
+                                        values = "slight_value")) %>%
+  dplyr::select(patient, cell_correlations) %>%
+  unnest()
+
+```
+
+### Spotlight: correlation of cell proportions
+
+Correlation of proportions is very noisy, and unreliable. Most of the correlations are close to 0
+
+```{r, warning=F}
+slight_cors <- slight_cors %>%
+  ungroup() %>%
+  dplyr::filter(cellA != cellB) %>%
+  dplyr::mutate(new_labelA = paste0(cellA, "_", cellB)) 
+
+order_cors <- slight_cors %>%
+  group_by(new_labelA) %>%
+  summarize(mean_cor = mean(cell_cor)) %>%
+  arrange(-mean_cor) %>%
+  pull(new_labelA)
+
+order_cors <- order_cors[seq(1, length(order_cors), 2.)]
+
+slight_cors %>%
+  dplyr::filter(new_labelA %in% order_cors) %>%
+  dplyr::mutate(new_labelA = factor(new_labelA,
+                                    levels = order_cors)) %>%
+  ggplot(aes(y = new_labelA,
+             x = cell_cor)) +
+  geom_boxplot() +
+  geom_jitter(aes(color = patient))
+```
+
+### Cell2location: correlation of cell proportions
+
+Correlations in general are higher, low variance may confirm cell colocalization patterns that are condition independent.
+
+```{r, warning=F}
+c2l_cors <- c2l_cors %>%
+  ungroup() %>%
+  dplyr::filter(cellA != cellB) %>%
+  dplyr::mutate(new_labelA = paste0(cellA, "_", cellB)) 
+
+order_cors <- c2l_cors %>%
+  group_by(new_labelA) %>%
+  summarize(mean_cor = mean(cell_cor)) %>%
+  arrange(-mean_cor) %>%
+  pull(new_labelA)
+
+order_cors <- order_cors[seq(1, length(order_cors), 2.)]
+
+c2l_cors %>%
+  dplyr::filter(new_labelA %in% order_cors) %>%
+  dplyr::mutate(new_labelA = factor(new_labelA,
+                                    levels = order_cors)) %>%
+  ggplot(aes(y = new_labelA,
+             x = cell_cor)) +
+  geom_boxplot() +
+  geom_jitter(aes(color = patient))
+
+```
+
+Without low quality samples
+
+```{r, warning=F}
+c2l_cors <- c2l_cors_mod %>%
+  ungroup() %>%
+  dplyr::filter(cellA != cellB) %>%
+  dplyr::mutate(new_labelA = paste0(cellA, "_", cellB)) 
+
+order_cors <- c2l_cors %>%
+  group_by(new_labelA) %>%
+  summarize(mean_cor = mean(cell_cor)) %>%
+  arrange(-mean_cor) %>%
+  pull(new_labelA)
+
+order_cors <- order_cors[seq(1, length(order_cors), 2.)]
+
+c2l_cors %>%
+  dplyr::filter(new_labelA %in% order_cors) %>%
+  dplyr::mutate(new_labelA = factor(new_labelA,
+                                    levels = order_cors)) %>%
+  ggplot(aes(y = new_labelA,
+             x = cell_cor)) +
+  geom_boxplot() +
+  geom_jitter(aes(color = patient))
+
+```
+
+
+
+## Can cell-interactions allow us to better describe patients
+
+In the previous plot I see that the correlation between cell-type is describing a pattern. This may happen because we observe a different proportion of cells in these samples
+
+```{r, warning=F}
+slide_cell_count = joint_data %>%
+  group_by(patient, cell_type) %>%
+  summarise(slight_cell_prop = sum(slight_value),
+            c2l_cell_prop = sum(c2l_value )) %>%
+  ungroup()
+
+```
+
+### Cell2location slide proportions
+
+As expected the patients that grouped above are the cells that have more adipocytes
+
+```{r, warning=F}
+prop_overview_c2l <- ggplot(slide_cell_count, 
+                        aes(fill = cell_type, 
+                            x = c2l_cell_prop, 
+                            y = patient)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("proportions")
+
+print(prop_overview_c2l)
+
+```
+
+### Spotlight slide proportions
+
+```{r, warning=F}
+prop_overview_slight <- ggplot(slide_cell_count, 
+                        aes(fill = cell_type, 
+                            x = slight_cell_prop, 
+                            y = patient)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("proportions")
+
+
+print(prop_overview_slight)
+```
+
+## How does this compare to the original composition of cells stated in single cell?
+
+```{r, warning=F}
+# Patient annotation -------------------------------------------------------------------------
+condition_dictionary <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
+                                   sep = "\t", header = T) %>%
+  mutate_all(as.character) %>%
+  dplyr::select(snRNA, New.Ids) %>%
+  dplyr::rename(patient = New.Ids)
+
+# Scell data meta --------------------------------------------------------------------------
+scell_meta <- readRDS("visium_results_manuscript/integration/integrated_wstates_meta.rds") %>%
+  dplyr::filter(! cell_type %in% c("unknownA", "unknownB", "immune")) %>%
+  dplyr::mutate(cell_type = ifelse(cell_type == "monocytes",
+                                   "macrophages", cell_type)) %>%
+  dplyr::mutate(cell_type = gsub("_","-",cell_type))
+  
+# Generate cell type counts -----------------------------------------------------------
+state_prop <- scell_meta %>%
+  group_by(orig.ident) %>%
+  mutate(n_cells = length(orig.ident)) %>%
+  ungroup() %>%
+  group_by(orig.ident, cell_type) %>%
+  mutate(n_state = length(orig.ident)) %>%
+  dplyr::select(orig.ident, 
+                n_cells, 
+                cell_type, 
+                n_state) %>%
+  unique() %>%
+  rename(snRNA = orig.ident) %>%
+  left_join(condition_dictionary)
+
+prop_overview <- ggplot(state_prop, 
+                        aes(fill = cell_type, 
+                            x = n_state, 
+                            y = patient)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("proportions")   
+
+print(prop_overview)
+```
+
+Does this correlate with what is observed in spatial? 
+
+```{r}
+state_prop <- state_prop %>% 
+  ungroup() %>%
+  dplyr::mutate(n_state = n_state/n_cells) %>%
+  dplyr::select(cell_type, n_state, patient)
+
+all_props <- slide_cell_count %>% 
+  group_by(patient) %>%
+  mutate(slight_slide_count = sum(slight_cell_prop),
+         c2l_slide_count = sum(c2l_cell_prop)) %>%
+  mutate(slight_cell_prop = slight_cell_prop/slight_slide_count,
+         c2l_cell_prop = c2l_cell_prop/c2l_slide_count) %>%
+  unique() %>%
+  left_join(state_prop, by = c("patient", "cell_type"))
+```
+
+### SPOTlight
+
+Low correlation even in major cell-types
+
+```{r}
+ggplot(all_props, aes(x = slight_cell_prop, 
+                 y = n_state, 
+                 color = cell_type)) +
+  geom_point() +
+  xlab("Visium") +
+  ylab("snRNA") +
+  facet_wrap(.~patient, nrow =  3)
+```
+
+### cell2location
+
+The fact that cell2location models densities (+ mRNA counts) allows to give a better estimate. I did not include any prior of proportions in the model which is extremely surprising!!
+
+```{r}
+ggplot(all_props, aes(x = c2l_cell_prop, 
+                 y = n_state, 
+                 color = cell_type)) +
+  geom_point() +
+  xlab("Visium") +
+  ylab("snRNA") +
+  facet_wrap(.~patient, nrow =  3)
+```
+
