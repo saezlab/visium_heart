@@ -41,7 +41,12 @@ option_list <- list(
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "column in data_path that contains the selected classes")
+              help = "column in data_path that contains the selected classes"),
+  make_option(c("--start_res"), 
+              action= "store", 
+              default = 0.2, 
+              type = 'double',
+              help = "inital resolution for optimization")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -101,7 +106,7 @@ integrated_data <- FindNeighbors(integrated_data,
                                  reduction = "harmony", 
                                  dims = 1:30)
 
-seq_res <- seq(0.5, 1.5, 0.1)
+seq_res <- seq(start_res, 1, 0.2)
 
 # Delete previous clustering
 integrated_data@meta.data <- integrated_data@meta.data[, !grepl("RNA_snn_res",
