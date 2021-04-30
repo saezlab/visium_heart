@@ -3,8 +3,8 @@
 
 #' Copying cell2location models to simpler paths
 library(tidyverse)
-deconv_mats_folder <- "./visium_results_manuscript/deconvolution/c2l/location_models/density_tables/"
-deconv_rds_folder <- "./visium_results_manuscript/deconvolution/c2l/location_models/density_tables_rds/"
+deconv_mats_folder <- "./visium_results_manuscript/deconvolution/c2l_statescollapsed/location_models/density_tables/"
+deconv_rds_folder <- "./visium_results_manuscript/deconvolution/c2l_statescollapsed/location_models/density_tables_rds/"
 mats_files <- list.files(deconv_mats_folder)
 mats_files <- mats_files[grepl("q05", mats_files)]
 rds_files <- paste0(map_chr(strsplit(mats_files,"_"), 
@@ -22,14 +22,6 @@ walk2(mats_files, rds_files, function(mf, rf) {
   
   saveRDS(as.matrix(mat), file = paste0(deconv_rds_folder, rf))
 })
-
-
-slide_files_folder <- "./visium_results_manuscript/processed_visium_revisions/"
-out_slides_folder <- "./visium_results_manuscript/processed_visium_revisions/"
-
-test = readRDS("./visium_results_manuscript/deconvolution/spotlight_mjr/157771_deconvmat.rds")
-
-
 
 
 
