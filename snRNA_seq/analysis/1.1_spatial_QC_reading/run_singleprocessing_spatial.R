@@ -19,7 +19,7 @@ library(tidyverse)
 library(Seurat)
 library(cluster)
 library(cowplot)
-source("./utils/funcomics.R")
+source("./analysis/utils/funcomics.R")
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(
@@ -64,7 +64,8 @@ for(user_input in names(opt)) {
 if(folder) {
   sample_names <- list.files(path)
   slide_files <- paste0(path,
-                        sample_names)
+                        sample_names,
+                        "/outs")
   } else {
   sample_names <- id
   slide_files <- path
@@ -74,6 +75,7 @@ if(folder) {
 param_df <- tibble(sample_name = sample_names,
                    slide_file = slide_files,
                    out_file = paste0(out_path, sample_names, ".rds"),
+                   out_fig_file_0 = paste0(out_fig_path, sample_names, "_noisyspots", ".jpeg"),
                    out_fig_file_a = paste0(out_fig_path, sample_names, "_slideqc", ".jpeg"),
                    out_fig_file_b = paste0(out_fig_path, sample_names, "_slideclustering", ".jpeg"))
 
@@ -82,6 +84,7 @@ param_df <- tibble(sample_name = sample_names,
 process_data_visium <- function(sample_name, 
                                 slide_file, 
                                 out_file, 
+                                out_fig_file_0,
                                 out_fig_file_a,
                                 out_fig_file_b) {
   set.seed(17)
@@ -90,15 +93,45 @@ process_data_visium <- function(sample_name,
   
   print(sample_name)
   
-  sample_seurat <- Load10X_Spatial(data.dir = slide_file,
-                                   filter.matrix = TRUE)
+  # We load all spots even the ones that are not over tissue
+  sample_seurat <- Seurat::Load10X_Spatial(data.dir = slide_file,
+                                           filename = "raw_feature_bc_matrix.h5",
+                                           filter.matrix = F)
+  
+  coldata <- GetTissueCoordinates(sample_seurat,
+                                   cols = c("row", "col", "tissue"),
+                                   scale = NULL)
+  
+  sample_seurat$tissue <- coldata[rownames(sample_seurat@meta.data), "tissue"]
+  
+  sample_seurat$tissue <- ifelse(sample_seurat$tissue == 1, 
+                                 "on_tissue", 
+                                 "not_on_tissue")
+  
+  # We do a comparison of profiles between spots in tissue and not in tissue
+  
+  rm(coldata)
+  
+  tissue_qc <- sample_seurat@meta.data %>%
+    select(-orig.ident) %>%
+    pivot_longer(-tissue, 
+                 names_to = "qc_features",
+                 values_to = "counts") %>%
+    ggplot(aes(x = qc_features, fill = tissue, y = counts)) +
+    geom_violin() +
+    facet_grid(. ~ qc_features, scales = "free")
+  
+  # Filter useful spots 
+  
+  sample_seurat <- subset(sample_seurat, subset = tissue == "on_tissue")
+  
+  # Continue with analysis
   
   sample_seurat[["orig.ident"]] <- sample_name
   
   # Get mitochondrial genes percentage ------------------------------------------------
   sample_seurat[["percent.mt"]] <- PercentageFeatureSet(sample_seurat, 
                                                         pattern = "^MT-")
-  
   # QC relationships -------------------------------------------------------------------
   qc_p1 <- sample_seurat@meta.data %>%
     ggplot(aes(x = nCount_Spatial, y = nFeature_Spatial)) +
@@ -111,7 +144,6 @@ process_data_visium <- function(sample_name,
     geom_point() +
     theme_classic() +
     ggtitle(paste0("nspots ", ncol(sample_seurat)))
-  
   
   qc_panel <- cowplot::plot_grid(qc_p1, qc_p2, ncol = 2, align = "hv")
   
@@ -151,7 +183,7 @@ process_data_visium <- function(sample_name,
   
   sample_seurat <- FindNeighbors(sample_seurat, reduction = "pca", dims = 1:30)
   
-  seq_res <- seq(0.3, 1, 0.1)
+  seq_res <- seq(0.5, 1.5, 0.1)
   
   sample_seurat <- FindClusters(sample_seurat, 
                                 resolution = seq_res,
@@ -217,6 +249,11 @@ process_data_visium <- function(sample_name,
   
   # Plot QC files
   print("plotting qc features")
+  
+  jpeg(file = out_fig_file_0, width = 800, height = 500)
+  plot(tissue_qc)
+  dev.off()
+  
   
   jpeg(file = out_fig_file_a, width = 1600, height = 1700)
   plot(qc_panel_a)
