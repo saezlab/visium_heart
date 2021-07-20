@@ -201,7 +201,7 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   sample_seurat <- FindNeighbors(sample_seurat, reduction = "pca", dims = 1:30)
   
-  seq_res <- seq(0.1, 1, 0.1)
+  seq_res <- seq(0.5, 1.5, 0.1)
   
   sample_seurat <- FindClusters(sample_seurat, 
                               resolution = seq_res,
@@ -219,7 +219,11 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   silhouette_res <- apply(cluster_info, 2, function(x){
     si <- silhouette(x, cell_dists)
-    mean(si[, 'sil_width'])
+    if(!is.na(si)) {
+      mean(si[, 'sil_width'])
+    } else {
+      NA
+    }
   })
   
   sample_seurat[["opt_clust"]] <- sample_seurat[[names(which.max(silhouette_res))]]
@@ -249,10 +253,6 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
 }
 
 # Main -----------------
-# Exception for this project only
-
-param_df <- param_df %>%
-  dplyr::filter(sample_name != "CK161")
 
 pwalk(param_df, process_data)
 
