@@ -201,7 +201,11 @@ process_data_visium <- function(sample_name,
   
   silhouette_res <- apply(cluster_info, 2, function(x){
     si <- silhouette(x, cell_dists)
-    mean(si[, 'sil_width'])
+    if(!is.na(si)) {
+      mean(si[, 'sil_width'])
+    } else {
+      NA
+    }
   })
   
   sample_seurat[["opt_clust"]] <- sample_seurat[[names(which.max(silhouette_res))]]
