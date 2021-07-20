@@ -99,7 +99,7 @@ integrated_data <- FindNeighbors(integrated_data,
                                  reduction = "harmony", 
                                  dims = 1:30)
 
-seq_res <- seq(0.2, 1, 0.1)
+seq_res <- seq(0.5, 1.5, 0.1)
 
 integrated_data <- FindClusters(integrated_data,
                                 resolution = seq_res,
@@ -116,7 +116,11 @@ cluster_info <- integrated_data@meta.data[,grepl(paste0(DefaultAssay(integrated_
 
 silhouette_res <- apply(cluster_info, 2, function(x){
   si <- silhouette(x, cell_dists)
-  mean(si[, 'sil_width'])
+  if(!is.na(si)) {
+    mean(si[, 'sil_width'])
+  } else {
+    NA
+  }
 })
 
 integrated_data[["opt_clust_integrated"]] <- integrated_data[[names(which.max(silhouette_res))]]
