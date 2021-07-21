@@ -75,9 +75,9 @@ if(folder) {
 param_df <- tibble(sample_name = sample_names,
                    slide_file = slide_files,
                    out_file = paste0(out_path, sample_names, ".rds"),
-                   out_fig_file_0 = paste0(out_fig_path, sample_names, "_noisyspots", ".jpeg"),
-                   out_fig_file_a = paste0(out_fig_path, sample_names, "_slideqc", ".jpeg"),
-                   out_fig_file_b = paste0(out_fig_path, sample_names, "_slideclustering", ".jpeg"))
+                   out_fig_file_0 = paste0(out_fig_path, sample_names, "_noisyspots", ".pdf"),
+                   out_fig_file_a = paste0(out_fig_path, sample_names, "_slideqc", ".pdf"),
+                   out_fig_file_b = paste0(out_fig_path, sample_names, "_slideclustering", ".pdf"))
 
 # Automatic processing of each data set --------------------------------
 
@@ -208,7 +208,9 @@ process_data_visium <- function(sample_name,
     }
   })
   
-  sample_seurat[["opt_clust"]] <- sample_seurat[[names(which.max(silhouette_res))]]
+  
+  optm_res <- names(which.max(silhouette_res))
+  sample_seurat[["opt_clust"]] <- sample_seurat[[optm_res]]
   
   # Reduce meta-data -------------------------------------------------------------------------
   spam_cols <- grepl(paste0(DefaultAssay(sample_seurat), "_snn_res"),
@@ -221,7 +223,9 @@ process_data_visium <- function(sample_name,
   
   final_embedding <- DimPlot(sample_seurat, group.by = "opt_clust") +
     ggtitle(paste0("n spots ", 
-                   ncol(sample_seurat)))
+                   ncol(sample_seurat), 
+                   " ",
+                   optm_res))
   
   spatial_embedding <- SpatialDimPlot(sample_seurat,
                                       group.by = "opt_clust",
@@ -231,6 +235,10 @@ process_data_visium <- function(sample_name,
                                       label.box = F)
   
   qc_panel_b <- cowplot::plot_grid(final_embedding, spatial_embedding, ncol = 2)
+  qc_panel_b_bis <- FeaturePlot(sample_seurat, features = c("percent.mt",
+                                                            "nCount_Spatial",
+                                                            "nFeature_Spatial"),
+                                ncol = 3)
   
   print("Adding funcomics")
   
@@ -254,24 +262,23 @@ process_data_visium <- function(sample_name,
   # Plot QC files
   print("plotting qc features")
   
-  jpeg(file = out_fig_file_0, width = 800, height = 500)
+  pdf(file = out_fig_file_0, width = 10, height = 7)
   plot(tissue_qc)
   dev.off()
   
-  
-  jpeg(file = out_fig_file_a, width = 1600, height = 1700)
+  pdf(file = out_fig_file_a, width = 16, height = 17)
   plot(qc_panel_a)
   dev.off()
   
-  jpeg(file = out_fig_file_b, width = 1600, height = 800)
+  pdf(file = out_fig_file_b, width = 16, height = 8)
   plot(qc_panel_b)
+  plot(qc_panel_b_bis)
   dev.off()
   
   print("finished")
 }
 
 # Main -----------------
-param_df <- param_df
 pwalk(param_df, process_data_visium)
 
 
