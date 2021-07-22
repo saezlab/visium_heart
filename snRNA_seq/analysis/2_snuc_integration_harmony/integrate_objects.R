@@ -51,12 +51,19 @@ slide_files_path <- set_names(paste0(path,slide_files), gsub(pattern = "[.]rds",
                                                              replacement = "",
                                                              slide_files))
 
-slide_data <- map(slide_files_path, readRDS)
+integrated_data <- map(slide_files_path, readRDS)
+print("You managed to load everything")
+print("Object size")
+print(object.size(integrated_data))
 
 # Create merged object ---------------------------------
-integrated_data <- reduce(slide_data,
+integrated_data <- reduce(integrated_data,
                           merge,
                           merge.data = TRUE)
+
+print("You managed to merge everything")
+print("Object size")
+print(object.size(integrated_data))
 
 # Default assay ---------------------------------------
 DefaultAssay(integrated_data) <- def_assay
