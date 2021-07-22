@@ -21,13 +21,14 @@ qc_feats <- c("sample_names",
               "Mean Reads per Spot",
               "Fraction Reads in Spots Under Tissue",
               "Median UMI Counts per Spot",
-              "Fraction of Spots Under Tissue")
+              "Fraction of Spots Under Tissue",
+              "Fraction Reads in Spots Under Tissue")
 
 sample_names <- list.files(path)
 
 slide_files <- paste0(path,
                       sample_names,
-                      "/outs/metrics_summary_csv.csv")
+                      "/outs/metrics_summary.csv")
 
 qc_stats <- tibble(sample_names,
                    qc_stats = map(slide_files, read_csv)) %>%
@@ -54,7 +55,7 @@ qc_stats_plts <- qc_stats %>%
 
 all_panels <- cowplot::plot_grid(plotlist = qc_stats_plts$qc_plt, align = "vh", ncol = 1)
 
-pdf(height = 19, width = 20, file = "./processed_visium/initial_qc/all_qcs.pdf")
+pdf(height = 25, width = 20, file = "./processed_visium/initial_qc/all_qcs.pdf")
 
 plot(all_panels)
 
