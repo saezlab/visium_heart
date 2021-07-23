@@ -47,7 +47,12 @@ option_list <- list(
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "where to save the fig objects")
+              help = "where to save the fig objects"),
+  make_option(c("--force_filter"), 
+              action = "store_true", 
+              default = TRUE, 
+              type = 'logical',
+              help = "shall we filter SCT matrix for MT-genes and filter spots based on ncounts?")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -158,6 +163,46 @@ process_data_visium <- function(sample_name,
                                  rel_heights = c(0.5, 0.5))
   
   # Process the data --------------------------------------------------------------------
+  
+  # Exclude MT and ribosomal genes ------------------------------------------------------
+  
+  if(force_filter) {
+    
+    #Ribosomal and mitochondrial genes are taken out
+    mt_genes <- row.names(sample_seurat)[grepl("^MT-", row.names(sample_seurat))]
+    rps_genes <- row.names(sample_seurat)[grepl("^RPS", row.names(sample_seurat))]
+    mrp_genes <- row.names(sample_seurat)[grepl("^MRP", row.names(sample_seurat))]
+    rpl_genes <- row.names(sample_seurat)[grepl("^RPL", row.names(sample_seurat))]
+    rb_genes <- c(rps_genes, mrp_genes, rpl_genes)
+    
+    sample_seurat <- sample_seurat[!rownames(sample_seurat) %in% c(rb_genes, mt_genes), ]
+    
+    # Then I recalculate the number of genes and reads per spot
+    sample_seurat$nFeature_Spatial_filt <- colSums(GetAssayData(sample_seurat, assay = "Spatial") > 0)
+    sample_seurat$nCount_Spatial_filt <- colSums(GetAssayData(sample_seurat, assay = "Spatial"))
+    
+    qc_p1_filt <- sample_seurat@meta.data %>%
+      ggplot(aes(x = nCount_Spatial_filt, y = nFeature_Spatial_filt)) +
+      geom_point() +
+      theme_classic() +
+      geom_vline(xintercept = 300) +
+      geom_hline(yintercept = 200) +
+      ggtitle(paste0("nspots ", ncol(sample_seurat)))
+    
+    qc_p2_filt <- sample_seurat@meta.data %>%
+      ggplot(aes(x = nFeature_Spatial_filt, y = percent.mt)) +
+      geom_point() +
+      theme_classic() +
+      geom_vline(xintercept = 200) +
+      ggtitle(paste0("nspots ", ncol(sample_seurat)))
+    
+    #Assumes that you have at least a single cell in a spot (same fi)
+    sample_seurat <- subset(sample_seurat, 
+                            subset = nFeature_Spatial_filt > 200 & 
+                              nCount_Spatial_filt > 300)
+    
+    qc_panel_filt <- cowplot::plot_grid(qc_p1_filt, qc_p2_filt, ncol = 2, align = "hv")
+  }
   
   # SCT transform normalization ---------------------------------------------------------
   sample_seurat <- SCTransform(sample_seurat, 
@@ -271,6 +316,7 @@ process_data_visium <- function(sample_name,
   dev.off()
   
   pdf(file = out_fig_file_b, width = 16, height = 8)
+  plot(qc_panel_filt)
   plot(qc_panel_b)
   plot(qc_panel_b_bis)
   dev.off()
