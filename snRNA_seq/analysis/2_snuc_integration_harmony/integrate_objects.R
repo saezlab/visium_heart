@@ -32,7 +32,17 @@ option_list <- list(
               action= "store", 
               default = "RNA", 
               type = 'character',
-              help = "default assays to integrate")
+              help = "default assays to integrate"),
+  make_option(c("--def_assay"), 
+              action= "store", 
+              default = "RNA", 
+              type = 'character',
+              help = "default assays to integrate"),
+  make_option(c("--optimize"), 
+              action = "store", 
+              default = TRUE, 
+              type = 'logical',
+              help = "Find best clustering? May fail for large datasets")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -87,7 +97,8 @@ original_pca_plt <- DimPlot(object = integrated_data,
 integrated_data <- RunHarmony(integrated_data, 
                               "orig.ident", 
                               plot_convergence = TRUE,
-                              assay.use = def_assay)
+                              assay.use = def_assay,
+                              max.iter.harmony = 20)
 
 # Corrected dimensions -----------------------
 corrected_pca_plt <- DimPlot(object = integrated_data, 
@@ -99,47 +110,68 @@ corrected_pca_plt <- DimPlot(object = integrated_data,
 integrated_data <- integrated_data %>% 
   RunUMAP(reduction = "harmony", dims = 1:30)
 
-# Clustering and optimization -------------------------
-print("Optimizing clustering")
-
 integrated_data <- FindNeighbors(integrated_data, 
                                  reduction = "harmony", 
                                  dims = 1:30)
 
-seq_res <- seq(0.5, 1.5, 0.1)
-
-integrated_data <- FindClusters(integrated_data,
-                                resolution = seq_res,
-                                verbose = F)
-
-# Optimize clustering ------------------------------------------------------
-cell_dists <- dist(integrated_data@reductions$harmony@cell.embeddings,
-                   method = "euclidean")
-
-cluster_info <- integrated_data@meta.data[,grepl(paste0(DefaultAssay(integrated_data),"_snn_res"),
-                                               colnames(integrated_data@meta.data))] %>%
-  dplyr::mutate_all(as.character) %>%
-  dplyr::mutate_all(as.numeric)
-
-silhouette_res <- apply(cluster_info, 2, function(x){
-  si <- silhouette(x, cell_dists)
-  if(!is.na(si)) {
-    mean(si[, 'sil_width'])
-  } else {
-    NA
-  }
-})
-
-integrated_data[["opt_clust_integrated"]] <- integrated_data[[names(which.max(silhouette_res))]]
-
-Idents(integrated_data) = "opt_clust_integrated"
-
-# Reduce meta-data -------------------------------------------------------------------------
-spam_cols <- grepl(paste0(DefaultAssay(integrated_data), "_snn_res"),
-                   colnames(integrated_data@meta.data)) |
-  grepl("seurat_clusters",colnames(integrated_data@meta.data))
-
-integrated_data@meta.data <- integrated_data@meta.data[,!spam_cols]
+if(optimize) { 
+  
+  # Clustering and optimization -------------------------
+  print("Optimizing clustering")
+  
+  seq_res <- seq(0.5, 1.5, 0.1)
+  
+  integrated_data <- FindClusters(integrated_data,
+                                  resolution = seq_res,
+                                  verbose = F)
+  
+  # Optimize clustering ------------------------------------------------------
+  cell_dists <- dist(integrated_data@reductions$harmony@cell.embeddings,
+                     method = "euclidean")
+  
+  
+  cluster_info <- integrated_data@meta.data[,grepl(paste0(DefaultAssay(integrated_data),"_snn_res"),
+                                                   colnames(integrated_data@meta.data))] %>%
+    dplyr::mutate_all(as.character) %>%
+    dplyr::mutate_all(as.numeric)
+  
+  silhouette_res <- apply(cluster_info, 2, function(x){
+    si <- silhouette(x, cell_dists)
+    if(!is.na(si)) {
+      mean(si[, 'sil_width'])
+    } else {
+      NA
+    }
+  })
+  
+  integrated_data[["opt_clust_integrated"]] <- integrated_data[[names(which.max(silhouette_res))]]
+  
+  Idents(integrated_data) = "opt_clust_integrated"
+  
+  # Reduce meta-data -------------------------------------------------------------------------
+  spam_cols <- grepl(paste0(DefaultAssay(integrated_data), "_snn_res"),
+                     colnames(integrated_data@meta.data)) |
+    grepl("seurat_clusters",colnames(integrated_data@meta.data))
+  
+  integrated_data@meta.data <- integrated_data@meta.data[,!spam_cols]
+  
+} else {
+  
+  print("Not Optimizing clustering")
+  
+  integrated_data <- FindClusters(integrated_data,
+                                  resolution = 1,
+                                  verbose = F)
+  
+  integrated_data[["opt_clust_integrated"]] <- integrated_data[["seurat_clusters"]]
+  
+  spam_cols <- grepl(paste0(DefaultAssay(integrated_data), "_snn_res"),
+                     colnames(integrated_data@meta.data)) |
+    grepl("seurat_clusters",colnames(integrated_data@meta.data))
+  
+  integrated_data@meta.data <- integrated_data@meta.data[,!spam_cols]
+  
+}
 
 # Save object ------------------------------------------------------
 saveRDS(integrated_data, file = out_file)
