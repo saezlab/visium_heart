@@ -177,6 +177,9 @@ process_data_visium <- function(sample_name,
     
     sample_seurat <- sample_seurat[!rownames(sample_seurat) %in% c(rb_genes, mt_genes), ]
     
+    #Genes expressed in less that 10 spots are filtered
+    sample_seurat <- sample_seurat[rowSums(GetAssayData(sample_seurat, assay = "Spatial") > 0) > 10, ]
+    
     # Then I recalculate the number of genes and reads per spot
     sample_seurat$nFeature_Spatial_filt <- colSums(GetAssayData(sample_seurat, assay = "Spatial") > 0)
     sample_seurat$nCount_Spatial_filt <- colSums(GetAssayData(sample_seurat, assay = "Spatial"))
@@ -186,20 +189,20 @@ process_data_visium <- function(sample_name,
       geom_point() +
       theme_classic() +
       geom_vline(xintercept = 300) +
-      geom_hline(yintercept = 200) +
+      geom_hline(yintercept = 500) +
       ggtitle(paste0("nspots ", ncol(sample_seurat)))
     
     qc_p2_filt <- sample_seurat@meta.data %>%
       ggplot(aes(x = nFeature_Spatial_filt, y = percent.mt)) +
       geom_point() +
       theme_classic() +
-      geom_vline(xintercept = 200) +
+      geom_vline(xintercept = 300) +
       ggtitle(paste0("nspots ", ncol(sample_seurat)))
     
-    #Assumes that you have at least a single cell in a spot (same fi)
+    #Assumes that you have at least a single cell in a spot (same as HCA)
     sample_seurat <- subset(sample_seurat, 
-                            subset = nFeature_Spatial_filt > 200 & 
-                              nCount_Spatial_filt > 300)
+                            subset = nFeature_Spatial_filt > 300 & 
+                              nCount_Spatial_filt > 500)
     
     qc_panel_filt <- cowplot::plot_grid(qc_p1_filt, qc_p2_filt, ncol = 2, align = "hv")
   }
