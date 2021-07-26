@@ -33,14 +33,9 @@ option_list <- list(
               default = "RNA", 
               type = 'character',
               help = "default assays to integrate"),
-  make_option(c("--def_assay"), 
-              action= "store", 
-              default = "RNA", 
-              type = 'character',
-              help = "default assays to integrate"),
   make_option(c("--optimize"), 
-              action = "store", 
-              default = TRUE, 
+              action = "store_true", 
+              default = FALSE, 
               type = 'logical',
               help = "Find best clustering? May fail for large datasets")
 )
@@ -92,7 +87,6 @@ original_pca_plt <- DimPlot(object = integrated_data,
               pt.size = .1, 
               group.by = "orig.ident")
 
-
 # Integrate the data -----------------------
 integrated_data <- RunHarmony(integrated_data, 
                               "orig.ident", 
@@ -108,7 +102,10 @@ corrected_pca_plt <- DimPlot(object = integrated_data,
 
 # Create the UMAP with new reduction -----------
 integrated_data <- integrated_data %>% 
-  RunUMAP(reduction = "harmony", dims = 1:30)
+  RunUMAP(reduction = "harmony", dims = 1:30,
+          reduction.name = "umap_harmony") %>%
+  RunUMAP(reduction = "pca", dims = 1:30,
+          reduction.name = "umap_original")
 
 integrated_data <- FindNeighbors(integrated_data, 
                                  reduction = "harmony", 
@@ -160,7 +157,7 @@ if(optimize) {
   print("Not Optimizing clustering")
   
   integrated_data <- FindClusters(integrated_data,
-                                  resolution = 1,
+                                  resolution = 0.5,
                                   verbose = F)
   
   integrated_data[["opt_clust_integrated"]] <- integrated_data[["seurat_clusters"]]
@@ -179,20 +176,41 @@ saveRDS(integrated_data, file = out_file)
 # Print QC file ------------------------------------------------------
 
 umap_corrected_sample <- DimPlot(object = integrated_data, 
-        reduction = "umap", 
+        reduction = "umap_harmony", 
         pt.size = .1, 
         group.by = "orig.ident")
 
 umap_corrected_clustering <- DimPlot(object = integrated_data, 
-          reduction = "umap", 
+          reduction = "umap_harmony", 
           pt.size = .1, 
           group.by = "opt_clust_integrated")
+
+umap_sample <- DimPlot(object = integrated_data, 
+                                 reduction = "umap_original", 
+                                 pt.size = .1, 
+                                 group.by = "orig.ident")
+
+umap_clustering <- DimPlot(object = integrated_data, 
+                                     reduction = "umap_original", 
+                                     pt.size = .1, 
+                                     group.by = "opt_clust_integrated")
 
 pdf(file = out_fig_file, height = 10, width = 12)
 
 print(original_pca_plt)
 print(corrected_pca_plt)
+print(umap_sample)
 print(umap_corrected_sample)
+print(umap_clustering)
 print(umap_corrected_clustering)
 
 dev.off()
+
+# Give reductions to ease future analysis
+
+reductions_list <-  list(meta_data = integrated_data@meta.data,
+                         reduction = integrated_data@reductions[["umap"]])
+
+saveRDS(reductions_list,
+        file = gsub("[.]rds", "_umap.rds", out_file))
+
