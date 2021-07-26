@@ -97,7 +97,7 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   sample_seurat <- Seurat::CreateSeuratObject(counts = input_data, 
                                               project = sample_name, 
                                               min.cells = 10, 
-                                              min.features = 200)
+                                              min.features = 300)
   rm(input_data)
   
   # Get mitochondrial genes
@@ -118,9 +118,9 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
     ggplot(aes(x = nCount_RNA, y = nFeature_RNA)) +
     geom_point() +
     theme_classic() +
-    geom_hline(yintercept = 200) + 
+    geom_hline(yintercept = 300) + 
     geom_hline(yintercept = nfeature_filter) +
-    geom_vline(xintercept = 300) +
+    geom_vline(xintercept = 500) +
     ggtitle(paste0("ncells ", ncol(sample_seurat)))
   
   filt_p2 <- sample_seurat@meta.data %>%
@@ -128,7 +128,7 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
     geom_point() +
     theme_classic() +
     geom_hline(yintercept = 5) + 
-    geom_vline(xintercept = 300) +
+    geom_vline(xintercept = 500) +
     ggtitle(paste0("ncells ", ncol(sample_seurat)))
   
   # Get mitochondrial genes
