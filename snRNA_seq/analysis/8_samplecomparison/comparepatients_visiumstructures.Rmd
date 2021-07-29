@@ -1,0 +1,418 @@
+---
+title: "Patient comparison (high level)"
+author: "Ricardo Ramirez"
+date: "7/29/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Background
+
+To perform a comparative analysis of the LV specimens acquired in different stages after MI we need to simplify the problem first:
+
+-I assumed that two samples will be similar if they share similar tissue structures. These are abstract representations of spot groups. One reason to explain this structures is thinking of them as stable cell-communities that have a particular function in the tissue.
+-I assumed that these tissue structures will occur in independent samples if they are functionally or structurally relevant
+-I finally assummed that these structures are reflected on the pseudobulk expression profile of each slide
+
+```{r setup, include=FALSE}
+library(scater)
+library(tidyverse)
+library(philentropy)
+library(uwot)
+library(cowplot)
+library(factoextra)
+library(compositions)
+source("./analysis/utils/pseudobulk_utils.R")
+```
+
+## Pseudobulk comparisons: Patient definitions
+
+## Reading pseudobulk data
+
+Load annotations of visium samples
+
+```{r sample_ann}
+sample_dict <- read.table("./markers/visium_annotations.txt",
+                                   sep = "\t", header = T)
+
+sample_dict
+```
+
+Load pseudobulk data of all patients and meta-data of integrated spots
+
+```{r pb_data}
+pseudobulk_data <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["gex"]]
+atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["annotations"]]
+```
+
+## Normalization and filtering
+
+To avoid adding technical effects related to gene capture, I will keep genes that are expressed in all samples
+
+Data is then cpm normalized
+
+```{r}
+pseudobulk_data_counts <- assay(pseudobulk_data)
+colnames(pseudobulk_data_counts) <- pseudobulk_data$slide.meta.data...vars.
+pseudobulk_data_counts <- edgeR_filtering(pseudobulk_data_counts, 
+                                          min.count = 100,
+                                          min.prop = 0.85,
+                                          min.total.count = 100)
+
+norm_pseudobulk_data_counts <- cpm_norm(pseudobulk_data_counts)
+```
+
+## Using regular CPMs plus PCA
+
+Perform hierarchical clustering of the data and ploting the dendogram
+
+```{r}
+gex_hclust <- eclust(t(norm_pseudobulk_data_counts[, sample_dict$sample_id]), "hclust", k = 3)
+```
+
+```{r}
+fviz_dend(gex_hclust, rect = TRUE)
+```
+
+```{r}
+sample_dict$patient_group = paste0("group_", gex_hclust$cluster)
+```
+
+We perform a PCA of the CPM profiles as we would do in bulk
+
+```{r}
+ilr_pcs_res <- prcomp(x = t(norm_pseudobulk_data_counts))
+ilr_pcs <- ilr_pcs_res$x %>%
+  as.data.frame() %>%
+  rownames_to_column("orig.ident")
+```
+
+```{r}
+ilr_pcs %>%
+left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = PC1, y = PC2, 
+             color = serial_number, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic()
+```
+
+This projection is misleading, since it only takes into account the first 2 PCs aprox 25%
+
+```{r}
+prop_sd = ilr_pcs_res$sdev/sum(ilr_pcs_res$sdev)
+PC_label = paste0("PC_", seq(1,length(ilr_pcs_res$sdev),1))
+
+tibble("prop_sd" = prop_sd,
+       "PC" = PC_label) %>%
+  ggplot(aes(x = factor(PC,
+                        levels = PC_label), 
+             y = prop_sd)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+## UMAP of samples
+
+Finally, we project the pseudobulk profiles in the UMAP and define three groups of patients from the hierarchical clustering of the expression profiles of all samples
+
+```{r}
+gex_umap <- umap(t(norm_pseudobulk_data_counts), 
+                 n_neighbors = 5, n_epochs = 1000) %>%
+  as.data.frame() %>%
+  mutate(orig.ident = colnames(norm_pseudobulk_data_counts))
+```
+
+```{r}
+gex_umap %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = V1, y = V2, 
+             color = serial_number, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic() +
+  xlab("UMAP1") +
+  ylab("UMAP2")
+```
+
+```{r }
+gex_umap %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = V1, y = V2, 
+             color = patient_group, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic() +
+  xlab("UMAP1") +
+  ylab("UMAP2")
+```
+
+```{r}
+sample_dict <- sample_dict %>% arrange(patient_group) %>%
+  mutate(pid = paste0(sample_id , "_", region))
+```
+
+## Mapping back to niches
+
+We performed an integration procedure of the spots of all slides with the assumption that clusters of spots represent the characteristic tissue structures that can be found in the LV of the heart in its healthy state and during disease. 
+
+```{r}
+integration_umap <- readRDS("./processed_visium/integration/integrated_slides_umap.rds")
+atlas_meta$UMAP_1 <- integration_umap$reduction@cell.embeddings[rownames(atlas_meta),"UMAP_1"]
+atlas_meta$UMAP_2 <- integration_umap$reduction@cell.embeddings[rownames(atlas_meta),"UMAP_2"]
+atlas_meta$niche <- paste0("niche_", atlas_meta$opt_clust_integrated)
+rm(integration_umap)
+```
+
+```{r, dev='jpeg'}
+ggplot(atlas_meta, aes(x = UMAP_1, y = UMAP_2, 
+                       color = niche)) +
+  geom_point(size = 0.05) +
+  theme_classic() +
+  guides(colour = guide_legend(override.aes = list(size=10)))
+```
+
+```{r}
+ggplot(atlas_meta, aes(x = UMAP_1, y = UMAP_2, 
+                       color = percent.mt)) +
+  geom_point(size = 0.05) +
+  theme_classic() 
+```
+
+The assumption is that changes in proportions of these structures (clusters) explain the differences in pseudobulk profiles
+
+```{r}
+# Niche composition -----------------------------------
+cell_info <- atlas_meta %>%
+  dplyr::group_by(orig.ident, opt_clust_integrated) %>%
+  summarize(ncells = length(opt_clust_integrated)) %>%
+  dplyr::mutate(all_sample_cells = sum(ncells)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(cell_prop = ncells/all_sample_cells) %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  mutate(niche = paste0("niche_", opt_clust_integrated)) %>%
+  arrange(patient_group)
+```
+
+```{r}
+cell_info %>%
+  ggplot(aes(x = ncells,
+           y = factor(pid,
+                      levels = sample_dict$pid),
+           fill = niche)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("n_spots")  
+```
+
+```{r}
+cell_info %>%
+  ggplot(aes(x = ncells,
+           y = patient_group,
+           fill = niche)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("n_spots")  
+```
+
+### How similar are the niche compositions between patients?
+
+First lets ensure that all proportions are complete. This means that the sum of all compositions equal to 1 per sample.
+
+In this case we have 28 samples and 23 niches
+
+```{r}
+cell_props <- cell_info %>%
+  dplyr::select(orig.ident, niche, cell_prop) %>%
+  pivot_wider(values_from = cell_prop,
+              names_from = niche) %>%
+  column_to_rownames(var = "orig.ident") %>%
+  acomp() %>%
+  as.data.frame()
+
+cell_props[is.na(cell_props)] <- 0
+
+head(cell_props)
+
+dim(cell_props)
+
+cell_props <- cell_props[sample_dict$sample_id,]
+rownames(cell_props) <- sample_dict$pid
+```
+
+Not all niches are informative for patient comparison(these are structures that are specific to a patient, noise, etc)
+
+```{r}
+ComplexHeatmap::Heatmap(cell_props)
+```
+
+So let's cut all the niches that aren't particularly present in 5 samples (minimum patient group size)
+
+```{r}
+niche_filter <- colSums(cell_props > 0.01) >= 5
+cell_props <- cell_props[, niche_filter]
+ComplexHeatmap::Heatmap(cell_props)
+
+niche_filter <- colnames(cell_props)
+```
+
+We can know repeat our plots and perform actual tests to identify which niches are changing
+
+```{r}
+cell_info %>%
+  dplyr::filter(niche %in% niche_filter) %>%
+  ggplot(aes(x = ncells,
+           y = factor(pid,
+                      levels = sample_dict$pid),
+           fill = niche)) + 
+  geom_bar(position="fill", 
+           stat="identity") +
+  theme(legend.position = "bottom") +
+  ylab("") + xlab("n_spots")  
+```
+
+Defining a basic Wilcoxon two-sided test 
+
+```{r}
+run_wilcox_all <- function(prop_data) {
+  
+  prop_data_group <- prop_data[["patient_group"]] %>%
+    unique() %>%
+    set_names()
+  
+  map(prop_data_group, function(g) {
+    
+    test_data <- prop_data %>%
+      mutate(test_group = ifelse(patient_group == g,
+                                 "target", "rest"))
+      
+    wilcox.test(cell_prop ~ test_group, 
+                data = test_data,
+                alternative = "two.sided") %>%
+      broom::tidy()
+  }) %>% enframe("patient_group") %>%
+    unnest()
+    
+}
+```
+
+Testing one patient group vs the rest
+
+```{r, warning = F, message = F}
+niche_test <- cell_info %>%
+  dplyr::filter(niche %in% niche_filter) %>%
+  dplyr::select(niche, cell_prop, patient_group) %>%
+  group_by(niche) %>%
+  nest() %>%
+  mutate(wilcox_res = map(data, run_wilcox_all)) %>%
+  dplyr::select(niche, wilcox_res) %>%
+  unnest() %>%
+  ungroup() %>%
+  mutate(corr_pval = p.adjust(p.value)) %>%
+  dplyr::filter(corr_pval <= 0.15)
+
+sign_niches <- niche_test %>% pull(niche) %>% unique()
+
+print(niche_test)
+```
+
+Plotting boxplots of proportions
+
+```{r}
+cell_info %>%
+  dplyr::filter(niche %in% sign_niches) %>%
+  ggplot(aes(x = patient_group, y =cell_prop, fill = patient_group)) +
+  geom_boxplot() +
+  theme_classic() +
+  theme(axis.text = element_text(size = 10),
+        axis.text.x = element_text(angle = 90)) +
+  facet_wrap(.~ niche, nrow = 2, scales = "free_y") +
+  ylab("niche proportion")
+```
+
+Of course, after this we can extract what are the differentially expressed genes of each niche (pseudobulk), cell-type proportion differences, progeny scores, etc.
+
+### Spatially variable genes
+
+As additional evidence I will show that enriched biological processes in spatially variable genes are conserved between patient groups
+
+```{r}
+run_wilcox_all <- function(prop_data) {
+  
+  prop_data_group <- prop_data[["patient_group"]] %>%
+    unique() %>%
+    set_names()
+  
+  map(prop_data_group, function(g) {
+    
+    test_data <- prop_data %>%
+      mutate(test_group = ifelse(patient_group == g,
+                                 "target", "rest"))
+      
+    wilcox.test(corr_p_value ~ test_group, 
+                data = test_data,
+                alternative = "less") %>%
+      broom::tidy()
+  }) %>% enframe("patient_group") %>%
+    unnest()
+    
+}
+```
+
+```{r, warning=F}
+spark_ora <- read_csv("./results/spark/spark_ora.csv") %>%
+  left_join(sample_dict) %>%
+  select(gset, corr_p_value, patient_group) %>%
+  mutate(corr_p_value = -log10(corr_p_value)) %>%
+  group_by(gset) %>% 
+  nest() %>%
+  mutate(wilcox_res = map(data, run_wilcox_all)) %>%
+  dplyr::select(gset, wilcox_res) %>%
+  unnest() %>%
+  ungroup() %>%
+  group_by(patient_group) %>%
+  mutate(corr_pval = p.adjust(p.value))
+  #  dplyr::filter(corr_pval  <= 0.15)
+```
+
+Group 1 pathways
+
+```{r}
+spark_ora %>%
+  dplyr::filter(patient_group == "group_1") %>%
+  arrange(p.value) %>%
+  dplyr::select(gset, p.value) %>%
+  dplyr::slice(1:50) %>%
+  print(n=50)
+```
+
+Group 2 pathways
+
+```{r}
+spark_ora %>%
+  dplyr::filter(patient_group == "group_2") %>%
+  arrange(p.value) %>%
+  dplyr::select(gset, p.value) %>%
+  dplyr::slice(1:50) %>%
+  print(n=50)
+```
+
+Group 3 pathways
+
+```{r}
+spark_ora %>%
+  dplyr::filter(patient_group == "group_3") %>%
+  arrange(p.value) %>%
+  dplyr::select(gset, p.value) %>%
+  dplyr::slice(1:50) %>%
+  print(n=50)
+```
+
+
