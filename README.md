@@ -1,5 +1,7 @@
 ## Spatially integrated single cell transcriptomic and epigenomic map of human myocardial infarction
 
+Note: This is the code of the revisions of this project
+
 ### Abstract
 
 **Aims:** 
@@ -29,7 +31,9 @@ Our results provide novel links between cell composition and function that could
  ***
 
  ### How to cite
- > Kuppe C, Ramirez Flores RO, Li Z, et al. “Multi-omic map of human myocardial infarction.” TBA. 2020. DOI: [TBA](link)
+ > Kuppe C, Ramirez Flores RO, Li Z, et al. “Multi-omic map of human myocardial infarction.” bioRxiv. 2020. DOI: [10.1101/2020.12.08.411686](https://www.biorxiv.org/content/10.1101/2020.12.08.411686v1%20%20)
+
+To access the code of the bioRxiv please look at the following [tag](https://github.com/saezlab/visium_heart/releases/tag/biorxiv)
 
  ***
 
