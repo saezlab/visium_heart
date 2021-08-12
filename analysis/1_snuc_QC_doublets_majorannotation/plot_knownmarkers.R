@@ -8,7 +8,7 @@
 library(optparse)
 library(tidyverse)
 library(Seurat)
-source("./utils/sc_plts.R")
+source("./analysis/utils/sc_plts.R")
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(
@@ -31,12 +31,12 @@ option_list <- list(
               action ="store", 
               default = NULL, 
               type = 'character',
-              help = "direct filtered_feature_bc_matrix file"),
+              help = "direct folder with .rds files or .rds files"),
   make_option(c("--out_fig_path"), 
               action= "store", 
               default = NULL, 
               type = 'character',
-              help = "where to save the rds objects")
+              help = "directory where to save the pdf file")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -70,7 +70,7 @@ param_df <- tibble(slide_file = slide_files_path,
 # Read marker list ------------------------------------------------------------------------------------
 
 # Gene markers from Christoph
-markers_stable <- (read.table("/beegfs/work/hd_wh241/visiumMI_revisions/markers/Kuppe_def.txt",
+markers_stable <- (read.table("/beegfs/work/hd_wh241/MI_revisions/markers/Kuppe_def.txt",
                               sep = "\t",stringsAsFactors = F,
                               header = T))[,c(1,2)]
 
@@ -112,7 +112,7 @@ plt_markers <- function(slide_file, out_fig_file) {
                              identity_label = id_label, 
                              GSC = alt_markers)
   
-  pdf(out_fig_file, width = 12)
+  pdf(out_fig_file, width = 16)
   print(home_hmap)
   print(hubner_hmap)
   dev.off()

@@ -22,7 +22,57 @@ library(uwot)
 library(lme4)
 library(lmerTest)
 library(fgsea)
+library(compositions)
+library(vsn)
 source("./analysis/utils/pseudobulk_utils.R")
+```
+
+Load annotations of visium samples
+
+```{r sample_ann}
+sample_dict <- read.table("./markers/visium_annotations_ext.txt", 
+                          sep = "\t", header = T)
+sample_dict
+```
+
+Load meta-data from the spot integration to generate niche compositions per sample
+
+```{r}
+atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides_niches.rds")[[1]][["annotations"]]
+
+# Niche composition -----------------------------------
+cell_info <- atlas_meta %>%
+  dplyr::group_by(orig.ident, opt_clust_integrated) %>%
+  summarize(ncells = length(opt_clust_integrated)) %>%
+  dplyr::mutate(all_sample_cells = sum(ncells)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(cell_prop = ncells/all_sample_cells) %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  mutate(niche = paste0("niche_", opt_clust_integrated))
+
+# Niche composition in matrix
+cell_props <- cell_info %>%
+  dplyr::select(orig.ident, niche, cell_prop) %>%
+  pivot_wider(values_from = cell_prop,
+              names_from = niche) %>%
+  column_to_rownames(var = "orig.ident") %>%
+  acomp() %>%
+  as.data.frame()
+
+cell_props[is.na(cell_props)] <- 0
+
+head(cell_props)
+dim(cell_props)
+
+# Sort them as in the meta-dictionary
+cell_props <- cell_props[sample_dict$sample_id,]
+rownames(cell_props) <- sample_dict$pid
+
+#Not all niches are informative for patient comparison(these are structures that are specific to a patient, noise, etc)
+# So let's cut all the niches that aren't particularly present in 5 samples (minimum patient group size)
+niche_filter <- colSums(cell_props > 0.01) >= 5
+cell_props <- cell_props[, niche_filter]
+niche_filter <- colnames(cell_props)
 ```
 
 ## Getting the pseudobulk expression profile of niches
@@ -41,33 +91,29 @@ niche_gex <- assay(niche_gex_obj$gex)
 colnames(niche_gex) <- meta_data$col_id
 ```
 
+Filter for niche of interest...
+
+```{r}
+meta_data <- meta_data %>%
+  dplyr::filter(niche %in% niche_filter)
+
+niche_gex <- niche_gex[,meta_data$col_id]
+```
+
 First, we need to filter all niche expression profiles coming from less than 30 spots
 
 ```{r}
 low_q_profiles <- which(meta_data$ncells < 30)
-
 niche_gex <- niche_gex[, -low_q_profiles]
 meta_data <- meta_data[-low_q_profiles, ]
 ```
 
-Then we filter all niches that are not represented by many samples
-
-```{r}
-table(meta_data$niche)
-```
-
-```{r}
-niche_names <- table(meta_data$niche)
-low_q_niches <- names(niche_names)[which(niche_names < 2)]
-low_q_niches <- which(meta_data$niche %in% low_q_niches)
-niche_gex <- niche_gex[, -low_q_niches]
-meta_data <- meta_data[-low_q_niches, ]
-```
-
 ```{r}
 niche_gex_cpm <- niche_gex %>%
-  edgeR_filtering(expression_matrix = . , min.count = 50, 
-                  min.prop = 0, min.total.count = 0) %>%
+  edgeR_filtering(expression_matrix = . , 
+                  min.count = 100,
+                  min.prop = 0.17,
+                  min.total.count = 100) %>%
   cpm_norm(expression_matrix = .)
 ```
 
@@ -129,36 +175,8 @@ gex_umap %>%
       theme_classic()
 ```
 
-## Alternative: Jensen Shannon divergences
-
-```{r}
-niche_gex_counts <- niche_gex %>%
-  edgeR_filtering(expression_matrix = . , min.count = 50, min.prop = 0, min.total.count = 0)
-
-
-jsd_dist <- as.data.frame(philentropy::JSD(t(niche_gex_counts),
-                                           est.prob = "empirical"))
-  
-rownames(jsd_dist) = colnames(jsd_dist) <- colnames(niche_gex_counts)
-  
-# Make it distance ----------------------------------
-jsd_dist <- jsd_dist ** (1/2)
-
-mds_data <- cmdscale(dist(jsd_dist), eig=TRUE, k=2)$points
-
-mds_data %>%
-  as.data.frame() %>%
-  rownames_to_column("col_id") %>%
-  left_join(meta_data, by = "col_id") %>%
-  ggplot(aes(x = V1, y = V2, 
-             color = sample)) +
-      geom_point(size = 2) +
-      theme_classic()
-```
 
 ## What if we standardize each gene within each sample?
-
-The vsmc niche is the only one that separates, with some of the immune clusters following
 
 ```{r}
 sample_ids <- set_names(meta_data$sample %>% unique())
@@ -190,6 +208,24 @@ ilr_pcs %>%
       theme_classic()
 ```
 
+```{r}
+gex_umap <- umap(t(std_niche_gex_cpm)) %>%
+  as.data.frame()
+
+colnames(gex_umap) <- c("UMAP1", "UMAP2")
+
+rownames(gex_umap) <- meta_data$col_id 
+
+gex_umap %>%
+  rownames_to_column("col_id") %>%
+  left_join(meta_data, by = "col_id") %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, 
+             color = niche)) +
+      geom_point(size = 2) +
+      theme_classic()
+```
+
+
 ## Using mixed models?
 
 ```{r}
@@ -202,7 +238,7 @@ niche_gex_cpm_long <- niche_gex_cpm %>%
 
 ### Run differential expression models using the samples as random effects
 
-```{r, warning = F, message=F, eval=F}
+```{r, warning = F, message=F}
 niche_gex_cpm_long <- niche_gex_cpm_long %>%
   group_by(gene) %>%
   nest() %>%
@@ -252,7 +288,7 @@ degs <- test_resuls %>%
 
 ### This containes the t-values and p-values of the fixed effects
 
-```{r, eval=F}
+```{r}
 degs_ext <- test_resuls %>%
   dplyr::select(-c("value", "anova_pval")) %>%
   rename(niche = name) %>%
@@ -269,12 +305,8 @@ degs_ext <- test_resuls %>%
   arrange(niche,-t_value)
 ```
 
-```{r, eval=F, include=F}
+```{r, include=F}
 saveRDS(degs_ext, file = "./processed_visium/integration/mixed_effects_dea.rds")
-```
-
-```{r, include = F}
-degs_ext <- readRDS(file = "./processed_visium/integration/mixed_effects_dea.rds")
 ```
 
 ### Sanity check of some of the genes
@@ -291,34 +323,18 @@ Let's pick a gene that is highly expressed in the first niche
 
 ```{r}
 niche_gex_cpm_long %>%
-  dplyr::filter(gene == degs[31]) %>%
-  #unnest(data) %>%
+  dplyr::filter(gene == degs[5]) %>%
+  unnest(data) %>%
   ggplot(aes(x = niche, y = expr)) +
   geom_boxplot() +
-  ggtitle(degs[31]) +
+  ggtitle(degs[5]) +
   theme(axis.text.x = element_text(angle = 90))
 ```
 
 Now let's see if the PCA improves...
 
 ```{r}
-ilr_pcs <- prcomp(x = t(std_niche_gex_cpm[degs, -which(meta_data$niche == "niche_8")]),
-                  center = T,scale. = T)
-
-ilr_pcs <- ilr_pcs$x %>%
-  as.data.frame() %>%
-  rownames_to_column("col_id")
-
-ilr_pcs %>%
-  left_join(meta_data, by = "col_id") %>%
-  ggplot(aes(x = PC1, y = PC2, 
-             color = niche)) +
-      geom_point(size = 2) +
-      theme_classic()
-```
-
-```{r}
-ilr_pcs <- prcomp(x = t(std_niche_gex_cpm[degs, ]),
+ilr_pcs <- prcomp(x = t(std_niche_gex_cpm[degs,]),
                   center = T,scale. = T)
 
 ilr_pcs <- ilr_pcs$x %>%
@@ -385,8 +401,14 @@ draw(Heatmap(t(scale(red_degs_ext)),
      heatmap_legend_side = "bottom", 
      annotation_legend_side = "bottom")
 
-```
 
+draw(Heatmap((scale(red_degs_ext)),
+        row_names_gp = gpar(fontsize = 5),
+        row_dend_side = "left",
+        heatmap_legend_param = list(direction = "horizontal")),
+     heatmap_legend_side = "bottom", 
+     annotation_legend_side = "bottom")
+```
 
 # GSEA
 

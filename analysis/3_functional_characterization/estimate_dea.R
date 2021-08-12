@@ -6,7 +6,7 @@
 library(optparse)
 library(tidyverse)
 library(Seurat)
-source("./utils/dea.R")
+source("./analysis/utils/dea.R")
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(

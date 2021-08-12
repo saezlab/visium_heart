@@ -82,6 +82,17 @@ param_df <- tibble(sample_name = sample_names,
                    out_file = paste0(out_path, sample_names, ".rds"),
                    out_fig_file = paste0(out_fig_path, sample_names, ".pdf"))
 
+# Dissociation score calculation -----------------------------------------------------------------------
+dis_score <- read.table("./markers/coregene_df-FALSE-v3.csv", sep = ",", header = T) %>%
+  dplyr::select(gene_symbol, PValue) %>%
+  arrange(PValue) %>%
+  dplyr::slice(1:200) %>%
+  pull(gene_symbol) %>%
+  unique() %>%
+  na.omit()
+
+dis_score_feats <- list("disease_score" = dis_score)
+
 # Automatic processing of each data set --------------------------------
 
 process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
@@ -107,9 +118,8 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   # Get a less stringent quantile check (since we are taking doublets anyway)
   # I will take the 1%
-  nfeature_filter = quantile(sample_seurat$nFeature_RNA,
+  nfeature_filter <- quantile(sample_seurat$nFeature_RNA,
                              1-0.01)
-  
   
   # Here we make a collection of plots needed ------------------------------
   # N features and ncount
@@ -133,10 +143,10 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   # Get mitochondrial genes
   sample_seurat <- subset(sample_seurat, 
-                          subset = nFeature_RNA > 200 & 
+                          subset = nFeature_RNA > 300 & 
                             nFeature_RNA < nfeature_filter & 
                             percent.mt < 5 & 
-                            nCount_RNA > 300)
+                            nCount_RNA > 500)
   
   print("Identifying doublets")
   
@@ -173,11 +183,24 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   quality_plt_bis <- DimPlot(sample_seurat, group.by = "doublet")
   
+  # Add dissociation score -------------------------------------------------------------------
+  
+  sample_seurat <- AddModuleScore(sample_seurat,
+                 assay = DefaultAssay(sample_seurat),
+                 features = dis_score_feats,
+                 name = "dissociation_s")
+  
+  quality_plt_bis_2 <- FeaturePlot(sample_seurat, features = 'dissociation_s1')
+  
+  dis_filter <- quantile(sample_seurat$dissociation_s1,
+                             1-0.01)
+  
   # Filter and do it again --------------------------------------------------------------------
   print("Getting variable features, scaling and low dimension representations")
   
   sample_seurat <- subset(sample_seurat, 
-                          subset = doublet == "singlet")
+                          subset = doublet == "singlet" &
+                            dissociation_s1 < dis_filter)
   
   sample_seurat <- FindVariableFeatures(sample_seurat, 
                                         selection.method = 'vst', 
@@ -228,6 +251,13 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   
   sample_seurat[["opt_clust"]] <- sample_seurat[[names(which.max(silhouette_res))]]
   
+  # Reduce meta-data -------------------------------------------------------------------------
+  spam_cols <- grepl(paste0(DefaultAssay(sample_seurat), "_snn_res"),
+                     colnames(sample_seurat@meta.data)) |
+    grepl("seurat_clusters",colnames(sample_seurat@meta.data))
+  
+  sample_seurat@meta.data <- sample_seurat@meta.data[,!spam_cols]
+  
   # Plot final resolution
   
   final_embedding <- DimPlot(sample_seurat, group.by = "opt_clust") +
@@ -246,6 +276,7 @@ process_data <- function(sample_name, slide_file, out_file, out_fig_file) {
   plot(cowplot::plot_grid(nrow = 1, ncol = 2, filt_p1, filt_p2))
   plot(quality_plt)
   plot(quality_plt_bis)
+  plot(quality_plt_bis_2)
   plot(final_embedding)
   
   dev.off()

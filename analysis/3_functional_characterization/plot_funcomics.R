@@ -230,3 +230,75 @@ if("RNA" %in% dea_res_df$assay) {
   dev.off()
     
 }
+
+
+# Generate ora for spatial -----------------------------
+
+if("Spatial" %in% dea_res_df$assay) {
+  
+  genes_df <- dea_res_df %>%
+    dplyr::filter(assay == "Spatial") %>%
+    dplyr::select(dea) %>% unnest()
+  
+  genes <- genes_df %>%
+    dplyr::select(cluster, gene) %>%
+    group_by(cluster) %>%
+    mutate(cluster = paste0("state_",as.character(cluster))) %>%
+    nest() %>%
+    deframe()
+  
+  genes <- map(genes, ~ .x[[1]])
+  
+  # states to test for ORA
+  states <- names(genes)
+  states <- states[map_int(genes, length) > ngenes_ORA]
+  genes <- genes[states]
+  
+  # Run ORA
+  ora_res <- map(genes, GSE_analysis, Annotation_DB = gsets)
+  
+  ora_res <- map(ora_res, function(x) { 
+    x %>% 
+      dplyr::filter(corr_p_value <= pvalue_ORA)
+  }) %>% 
+    enframe(name = "state") %>%
+    unnest()
+  
+  # Write ORA
+  write.table(x = ora_res,
+              file = paste0(out_path, "_ORA", ".txt"),
+              quote = F,
+              row.names = F,
+              col.names = T, 
+              sep = "\t")
+  
+  # Heatmap of ORA
+  
+  short_ora_res <- ora_res %>%
+    group_by(state) %>%
+    dplyr::slice(1:15) %>%
+    ungroup()
+  
+  hmapora <- short_ora_res %>%
+    ggplot(aes(x = state,
+               y = factor(gset, 
+                          levels = unique(short_ora_res$gset)), 
+               fill = -log10(corr_p_value))) + 
+    geom_tile(na.rm = T) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90,vjust=1),
+          axis.text.y = element_text(hjust = 1)) +
+    scale_fill_gradient(
+      low = "black",
+      high = "yellow",
+      limits = c(0,15)) +
+    ylab("")
+  
+  pdf(file = paste0(out_path, "_ORA", ".pdf"), 
+      height = 9, width = 12)
+  
+  print(hmapora)
+  
+  dev.off()
+  
+}

@@ -155,6 +155,8 @@ gex_umap %>%
 ```{r}
 sample_dict <- sample_dict %>% arrange(patient_group) %>%
   mutate(pid = paste0(sample_id , "_", region))
+
+write.table(sample_dict, file = "./markers/visium_annotations_ext.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 ```
 
 ## Mapping back to niches
@@ -367,10 +369,13 @@ run_wilcox_all <- function(prop_data) {
 ```
 
 ```{r, warning=F}
-spark_ora <- read_csv("./results/spark/spark_ora.csv") %>%
+spark_single_slide_ora <- read_csv("./results/spark/spark_ora.csv") %>%
   left_join(sample_dict) %>%
-  select(gset, corr_p_value, patient_group) %>%
-  mutate(corr_p_value = -log10(corr_p_value)) %>%
+  dplyr::select(gset, corr_p_value, patient_group, sample_id, pid) %>%
+  mutate(corr_p_value = -log10(corr_p_value))
+
+spark_ora_wilcox <- spark_single_slide_ora %>%
+  dplyr::select(-c("sample_id", "pid")) %>%
   group_by(gset) %>% 
   nest() %>%
   mutate(wilcox_res = map(data, run_wilcox_all)) %>%
@@ -385,34 +390,77 @@ spark_ora <- read_csv("./results/spark/spark_ora.csv") %>%
 Group 1 pathways
 
 ```{r}
-spark_ora %>%
+g1_sets <- spark_ora_wilcox %>%
   dplyr::filter(patient_group == "group_1") %>%
   arrange(p.value) %>%
   dplyr::select(gset, p.value) %>%
-  dplyr::slice(1:50) %>%
-  print(n=50)
+  dplyr::filter(p.value <= 0.05 & 
+                grepl("muscle", gset, ignore.case = T)) %>%
+  pull(gset)
 ```
 
 Group 2 pathways
 
 ```{r}
-spark_ora %>%
+g2_sets <- spark_ora_wilcox %>%
   dplyr::filter(patient_group == "group_2") %>%
   arrange(p.value) %>%
   dplyr::select(gset, p.value) %>%
-  dplyr::slice(1:50) %>%
-  print(n=50)
+  dplyr::filter(p.value <= 0.05 & 
+                grepl("immune", gset, ignore.case = T)) %>%
+  pull(gset)
 ```
 
 Group 3 pathways
 
 ```{r}
-spark_ora %>%
+g3_sets <- spark_ora_wilcox %>%
   dplyr::filter(patient_group == "group_3") %>%
   arrange(p.value) %>%
   dplyr::select(gset, p.value) %>%
-  dplyr::slice(1:50) %>%
-  print(n=50)
+  dplyr::filter(p.value <= 0.05 & 
+                (grepl("ecm", gset, ignore.case = T) |
+                 grepl("collagen", gset, ignore.case = T))) %>%
+  pull(gset)
 ```
 
+## Creating tileplots of functions
+
+```{r, fig.width= 12, fig.height=6}
+spark_single_slide_ora %>%
+  dplyr::filter(gset %in% c(g1_sets,g2_sets,g3_sets)) %>%
+  mutate(corr_p_value = ifelse(corr_p_value>10, 10,
+                               corr_p_value)) %>%
+  ggplot(aes(x = factor(pid,
+                        levels =  sample_dict$pid), 
+             y = factor(gset,
+                        levels = c(g1_sets,g2_sets,g3_sets)), 
+             fill = corr_p_value)) +
+  geom_tile() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+  ylab("") +
+  xlab("")
+```
+
+Scaling p-values, not sure about this
+
+```{r, fig.width= 12, fig.height=6}
+spark_single_slide_ora_filt <-  spark_single_slide_ora %>%
+  dplyr::filter(gset %in% c(g1_sets,g2_sets,g3_sets)) %>%
+  group_by(gset) %>%
+  mutate(scaled_score = scale(corr_p_value,scale = T))
+
+spark_single_slide_ora_filt$scaled_score <- spark_single_slide_ora_filt$scaled_score[,1]
+
+spark_single_slide_ora_filt %>%
+  ggplot(aes(x = factor(pid,
+                        levels =  sample_dict$pid), 
+             y = factor(gset,
+                        levels = c(g1_sets,g2_sets,g3_sets)), 
+             fill = scaled_score)) +
+  geom_tile() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  ylab("") +
+  xlab("")
+```
 

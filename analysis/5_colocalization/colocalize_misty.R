@@ -45,7 +45,21 @@ run_colocalization <- function(slide, assay,
   return(misty_out)
 }
 
-# Main -----------------------------------
+# Main ------------------------------------------------------------------------
+
+# Getting sample annotations --------------------------------------------------
+
+sample_dict <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
+                          sep = "\t", header = T) %>%
+  mutate_all(as.character) %>%
+  dplyr::select(Visium, New.Ids) %>%
+  dplyr::rename(orig.ident = Visium,
+                patient_sample = New.Ids) %>%
+  dplyr::mutate(patient = map_chr(strsplit(patient_sample, "_"), 
+                                  ~.x[[1]]),
+                area = map_chr(strsplit(patient_sample, "_"), 
+                               ~.x[[2]]))
+
 slide_files_folder <- "./processed_visium/objects/"
 slide_files <- list.files(slide_files_folder)
 slide_ids <- gsub("[.]rds", "", slide_files)
@@ -73,6 +87,43 @@ misty_outs <- map(slide_files, function(slide_file){
 })
 
 misty_res <- mistyR::collect_results(unlist(misty_outs))
+
+# Here you can perform the PCA of importances
+misty_outs <- list.dirs("visium_results_manuscript/colocalization")
+misty_outs <- misty_outs[grepl("all_", misty_outs)]
+misty_outs <- misty_outs[grepl("_props", misty_outs)]
+misty_outs <- set_names(misty_outs, slide_ids)
+
+misty_importances <- tibble(m_outs = misty_outs, slide_id = slide_ids) %>%
+  group_by(slide_id) %>%
+  mutate(misty_res = map(m_outs, ~ mistyR::collect_results(.x)$importances.aggregated %>%
+           enframe("view") %>% 
+           unnest() %>% 
+           pivot_longer(-c(Predictor,view), names_to = "Predicted", values_to = "Importance") %>% 
+           na.omit())) %>%
+  unnest() %>%
+  dplyr::select(-m_outs) %>%
+  dplyr::mutate(id = paste(view,Predictor,Predicted, sep = "_")) %>%
+  dplyr::select(slide_id, id, Importance) %>%
+  pivot_wider(names_from = id, values_from = Importance) %>%
+  column_to_rownames("slide_id") %>%
+  as.matrix()
+
+misty_pcs <- prcomp(x = misty_importances[sample_dict$orig.ident, ])
+
+ggbiplot::ggbiplot(misty_pcs, obs.scale = 1, var.scale = 1, 
+                   labels = sample_dict$patient_sample, var.axes = F) +
+  scale_color_discrete(name = '') +
+  theme(legend.direction = 'horizontal', legend.position = 'top')
+
+misty_pcs$rotation %>% 
+  as.data.frame() %>% 
+  rownames_to_column("interactions") %>% 
+  pivot_longer(-interactions) %>% 
+  filter(name %in% c("PC1", "PC2")) %>% 
+  arrange(name,-abs(value)) %>%
+  group_by(name) %>%
+  slice(1:5)
 
 pdf("./visium_results_manuscript/colocalization/misty_colocalization_allc2lprops.pdf")
 

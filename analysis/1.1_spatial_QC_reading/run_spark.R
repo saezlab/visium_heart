@@ -82,10 +82,11 @@ spark_analysis <- function(sample_names, tissue_paths, out_file){
     
     sparkX <- sparkx(spark.counts,
                      spark.location,
-                     numCores=2,
+                     numCores=4,
                      option="mixture")
     
-    write_csv(sparkX$res_mtest, 
+    write_csv(sparkX$res_mtest %>% 
+                rownames_to_column("gene"), 
               path = out_file, col_names = T)
 
 }

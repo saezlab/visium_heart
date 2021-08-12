@@ -68,14 +68,14 @@ get_sample_pseudo <- function(slide_file, vars, group_vars = "n") {
     
     # Creates pseudobulk profile for each var
     bulk_p_data <- map(vars, function(x) { 
-      sumCountsAcrossCells(x = as.matrix(slide@assays[[def_assay]]@counts),
+      sumCountsAcrossCells(x = GetAssayData(slide, assay = def_assay, slot = "counts"),
                            ids = slide@meta.data[, x])
     })
     
   } else { 
     
     bulk_p_data <- list()
-    bulk_p_data[["gex"]] <- sumCountsAcrossCells(x = as.matrix(slide@assays[[def_assay]]@counts),
+    bulk_p_data[["gex"]] <- sumCountsAcrossCells(x = GetAssayData(slide, assay = def_assay, slot = "counts"),
                                                  ids = DataFrame(slide@meta.data[, vars]))
     
   }

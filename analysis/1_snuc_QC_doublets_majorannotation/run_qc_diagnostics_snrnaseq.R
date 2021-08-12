@@ -62,3 +62,10 @@ pdf(height = 20, width = 17, file = "./processed_snrnaseq/initial_qc/all_qcs.pdf
 plot(all_panels)
 
 dev.off()
+
+qc_stats[, c("sample_names",
+             "Estimated Number of Cells",
+             "Mean Reads per Cell",
+             "Median Genes per Cell")] %>% 
+  write.table(row.names = F, col.names = T, quote = F, sep = ",",
+              file = "./processed_snrnaseq/initial_qc/all_qcs.csv")

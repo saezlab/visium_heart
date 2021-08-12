@@ -28,7 +28,7 @@ edgeR_filtering <- function(expression_matrix,
                              min.count = min.count,
                              min.prop = min.prop,
                              min.total.count = min.total.count,
-                             group = colnames(bulk_data))
+                             group = rep("same_group",ncol(bulk_data)))
   
   bulk_data = bulk_data[keep,]
   
@@ -61,8 +61,8 @@ compare_profiles <- function(matA, matB, jsd = TRUE) {
   
   colnames(matB) <- paste0("B_", colnames(matB))
   
-  matA <- matA[gene_ids, ]
-  matB <- matB[gene_ids, ]
+  matA <- matA[gene_ids, colSums(matA)>0]
+  matB <- matB[gene_ids, colSums(matB)>0]
   
   if(jsd){
     

@@ -14,8 +14,6 @@
 library(optparse)
 library(tidyverse)
 library(Seurat)
-library(cluster)
-library(cowplot)
 source("./analysis/utils/funcomics.R")
 
 # Argument definition ---------------------------------------------------------------------------------
@@ -82,4 +80,4 @@ add_niche_name <- function(visium_file, sample) {
   saveRDS(visium_slide, file = visium_file)
 }
 
-pmap(visium_df, add_niche_name)
+pwalk(visium_df, add_niche_name)

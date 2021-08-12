@@ -5,7 +5,7 @@
 #' spaceranger diagnostics
 #' folder
 #' |
-#' sample---
+#' sample---outs
 #'          |
 #'          ---spatial
 #'          ---filtered_feature_bc_matrix.h5

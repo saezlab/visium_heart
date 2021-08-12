@@ -10,6 +10,7 @@ library(tidyverse)
 library(Seurat)
 library(harmony)
 library(cluster)
+library(clustree)
 
 # Argument definition ---------------------------------------------------------------------------------
 option_list <- list(
@@ -37,7 +38,12 @@ option_list <- list(
               action = "store_true", 
               default = FALSE, 
               type = 'logical',
-              help = "Find best clustering? May fail for large datasets")
+              help = "Find best clustering? May fail for large datasets"),
+  make_option(c("--default_resolution"), 
+              action ="store", 
+              default = 0.5, 
+              type = 'double',
+              help = "minimum number of genes for ORA")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -122,6 +128,9 @@ if(optimize) {
                                   resolution = seq_res,
                                   verbose = F)
   
+  clustree_plt <- clustree(integrated_data, 
+                           prefix = paste0(DefaultAssay(integrated_data), "_snn_res."))
+  
   # Optimize clustering ------------------------------------------------------
   cell_dists <- dist(integrated_data@reductions$harmony@cell.embeddings,
                      method = "euclidean")
@@ -156,8 +165,18 @@ if(optimize) {
   
   print("Not Optimizing clustering")
   
+  seq_res <- seq(0.2, 1.6, 0.2)
+  
   integrated_data <- FindClusters(integrated_data,
-                                  resolution = 0.5,
+                                  resolution = seq_res,
+                                  verbose = F)
+  
+  clustree_plt <- clustree(integrated_data, 
+                           prefix = paste0(DefaultAssay(integrated_data), 
+                                           "_snn_res."))
+  
+  integrated_data <- FindClusters(integrated_data,
+                                  resolution = default_resolution,
                                   verbose = F)
   
   integrated_data[["opt_clust_integrated"]] <- integrated_data[["seurat_clusters"]]
@@ -201,6 +220,7 @@ print(original_pca_plt)
 print(corrected_pca_plt)
 print(umap_sample)
 print(umap_corrected_sample)
+print(clustree_plt)
 print(umap_clustering)
 print(umap_corrected_clustering)
 
@@ -209,7 +229,7 @@ dev.off()
 # Give reductions to ease future analysis
 
 reductions_list <-  list(meta_data = integrated_data@meta.data,
-                         reduction = integrated_data@reductions[["umap"]])
+                         reduction = integrated_data@reductions[["umap_harmony"]])
 
 saveRDS(reductions_list,
         file = gsub("[.]rds", "_umap.rds", out_file))

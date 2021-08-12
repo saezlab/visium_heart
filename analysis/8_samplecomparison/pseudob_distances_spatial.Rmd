@@ -1,0 +1,121 @@
+---
+title: "Spatial pseudobulk distances"
+author: "Ricardo Ramirez"
+date: "4/23/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+One way to compare spatial samples is using their pseudobulk molecular distances. The idea is that samples with similar conditions (cell-type composition) will have similar pseudobulk bulk profiles. We use two simple technique. Jensen-Shannon divergences distances and correlations from CPM transformed data.
+
+```{r setup, include=FALSE}
+library(scater)
+library(tidyverse)
+library(philentropy)
+library(uwot)
+library(cowplot)
+source("./analysis/utils/pseudobulk_utils.R")
+```
+
+## Reading pseudobulk data
+
+Load annotations of visium samples
+
+```{r}
+sample_dict <- read.table("./markers/visium_annotations.txt",
+                                   sep = "\t", header = T)
+
+sample_dict
+```
+
+```{r cars}
+pseudobulk_data <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["gex"]]
+atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["annotations"]]
+```
+
+## Normalization and filtering
+
+```{r}
+pseudobulk_data_counts <- assay(pseudobulk_data)
+colnames(pseudobulk_data_counts) <- pseudobulk_data$slide.meta.data...vars.
+pseudobulk_data_counts <- edgeR_filtering(pseudobulk_data_counts, 
+                                          min.count = 100,
+                                          min.prop = 1,
+                                          min.total.count = 100)
+
+norm_pseudobulk_data_counts <- cpm_norm(pseudobulk_data_counts)
+```
+
+## JSD distance and MDS
+
+```{r}
+jsd_dist <- as.data.frame(philentropy::JSD(t(pseudobulk_data_counts),
+                                           est.prob = "empirical"))
+  
+rownames(jsd_dist) = colnames(jsd_dist) <- colnames(pseudobulk_data_counts) 
+  
+# Make it distance ----------------------------------
+jsd_dist <- jsd_dist ** (1/2)
+
+mds_data <- cmdscale(dist(jsd_dist), eig=TRUE, k=2)$points
+
+mds_data %>%
+  as.data.frame() %>%
+    rownames_to_column("orig.ident") %>% 
+    left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = V1, y = V2, 
+             color = serial_number, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic()
+
+jsd_dist %>% write.table(file = "./jsd_visium_molecular.txt",
+                         sep = "\t", row.names = T, col.names = T, 
+                         quote = F)
+```
+
+## Using regular CPMs plus PCA
+
+```{r}
+ilr_pcs_res <- prcomp(x = t(norm_pseudobulk_data_counts))
+ilr_pcs <- ilr_pcs_res$x %>%
+  as.data.frame() %>%
+  rownames_to_column("orig.ident")
+```
+
+```{r}
+ilr_pcs %>%
+left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = PC1, y = PC2, 
+             color = serial_number, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic()
+```
+
+```{r}
+gex_umap <- umap(t(norm_pseudobulk_data_counts), 
+                 n_neighbors = 7, 
+                 learning_rate = 0.5, 
+                 init = "random") %>%
+  as.data.frame() %>%
+  mutate(orig.ident = colnames(norm_pseudobulk_data_counts)) %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  ggplot(aes(x = V1, y = V2, 
+             color = serial_number, 
+             label = region)) +
+      geom_point(size = 1) +
+      ggrepel::geom_text_repel() +
+      theme_classic() +
+  xlab("UMAP1") +
+  ylab("UMAP2")
+
+print(gex_umap)
+```
+
+

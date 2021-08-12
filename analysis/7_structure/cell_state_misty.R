@@ -156,7 +156,8 @@ get_blocked_misty_views <- function(slide_path,
 
 # In this first step we subset data by a variable of interest
 
-view_names <- c("main_state", "juxta_props", "para_props") %>%
+view_names <- c("main_state", "intra_props", 
+                "juxta_props", "para_props") %>%
   set_names()
 
 state_vector <- c("cardiomyocytes-0", "cardiomyocytes-1", "cardiomyocytes-2", "cardiomyocytes-3",
@@ -186,17 +187,21 @@ state_misty_pplne <- function(state_flag,
                             group_id = 1,
                             # Define spatial context of each view -----
                             view_types = list("main_state" = "intra", 
+                                              "intra_props" = "intra",
                                               "juxta_props" = "juxta",
                                               "para_props" = "para"),
                             # Define additional parameters (l in case of paraview,
                             # n of neighbors in case of juxta) --------
                             view_params = list("main_state" = NULL, 
+                                               "intra_props" = NULL,
                                                "juxta_props" = 5,
                                                "para_props" = 15),
                             view_assays = list("main_state" = "cell_states",
+                                               "intra_props" = "c2l_major_props",
                                                "juxta_props" = "c2l_major_props",
                                                "para_props" = "c2l_major_props"),
                             feature_exception = list("main_state" = ct_exception,
+                                                     "intra_props" = c(major_ct, "adipocytes"),
                                                      "juxta_props" = c(major_ct, "adipocytes"),
                                                      "para_props" = c(major_ct, "adipocytes"))))
   
@@ -268,7 +273,7 @@ walk(test, function(misty_out_path) {
   
   misty_out <- mistyR::collect_results(misty_out_path)
   
-  pdf(file = pdf_file, height = 8, width = 8)
+  pdf(file = pdf_file, height = 5, width = 5)
   
   print(misty_out$improvements %>%
           dplyr::filter(grepl("R2", measure) &
@@ -282,6 +287,8 @@ walk(test, function(misty_out_path) {
   misty_out %>% mistyR::plot_view_contributions()
   
   misty_out %>% mistyR::plot_interaction_heatmap("intra", cutoff = 0.5) 
+  
+  misty_out %>% mistyR::plot_interaction_heatmap("intra_props", cutoff = 0.5)
   
   misty_out %>% mistyR::plot_interaction_heatmap("juxta_props", cutoff = 0.5)
   
