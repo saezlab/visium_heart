@@ -1,0 +1,11 @@
+name: test_app
+title:
+username:
+account: saezlab
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4490775
+bundleId: 4921018
+url: https://saezlab.shinyapps.io/test_app/
+when: 1628886235.58353
+lastSyncTime: 1628886235.58355
