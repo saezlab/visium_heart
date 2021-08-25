@@ -42,7 +42,7 @@ hist(gene_significance_counter)
 
 # Getting the most unique genes
 
-gene_cut <- names(gene_significance_counter[gene_significance_counter <= 5])
+gene_cut <- names(gene_significance_counter[gene_significance_counter <= 30])
 
 # Generate the dataframe that contains the marker genes
 # p-value cut-off + exclusivity cutoff
@@ -50,11 +50,11 @@ niche_markers <- filtered_mixeff_res %>%
   dplyr::filter(gene %in% gene_cut) %>%
   dplyr::select(gene, niche) %>%
   nest("gene") %>%
-  rename(gene = data) %>%
+  dplyr::rename(gene = data) %>%
   mutate(gene = map(gene, ~ .x[[1]])) %>%
   deframe()
 
-saveRDS(niche_markers, "./markers/niche_markers.rds")
+saveRDS(niche_markers, "./markers/niche_markers_ps.rds")
 
 # Filter t-values to include genes with significant difference and quite unique to the niche
 
@@ -76,14 +76,14 @@ draw(Heatmap(t((red_degs_ext)),
 
 # Let's plot the names of the genes of the top genes (10)
 
-top_n = 5
+top_n <- 10
 
 gene_cut <- filtered_mixeff_res %>%
   dplyr::filter(gene %in% gene_cut) %>%
   ungroup() %>%
   arrange(niche, -t_value) %>%
   group_by(niche) %>%
-  slice(1:top_n) %>%
+  dplyr::slice(1:top_n) %>%
   pull(gene)
 
 red_degs_ext <- mixed_effects_res %>% 
@@ -94,7 +94,7 @@ red_degs_ext <- mixed_effects_res %>%
   as.matrix()
 
 
-pdf("./results/niche_mapping/DE_genes_niches.pdf", height = 4.5, width = 12)
+pdf("./results/niche_mapping/DE_genes_niches.pdf", height = 4.5, width = 16)
 draw(Heatmap(red_degs_ext,
              heatmap_legend_param = list(direction = "horizontal")),
      heatmap_legend_side = "bottom", 

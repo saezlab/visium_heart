@@ -190,7 +190,7 @@ std_niche_gex_cpm <- map(sample_ids, function(s_id) {
   
 })
 
-std_niche_gex_cpm <- reduce(std_niche_gex_cpm, cbind)
+std_niche_gex_cpm <- purrr::reduce(std_niche_gex_cpm, cbind)
 ```
 
 ```{r}
@@ -291,7 +291,7 @@ degs <- test_resuls %>%
 ```{r}
 degs_ext <- test_resuls %>%
   dplyr::select(-c("value", "anova_pval")) %>%
-  rename(niche = name) %>%
+  dplyr::rename("niche" = name) %>%
   unnest(model_coefficients) %>%
   dplyr::filter(term == "nichetest_niche",
                 name %in% c("t value", "Pr(>|t|)")) %>%
@@ -314,7 +314,7 @@ saveRDS(degs_ext, file = "./processed_visium/integration/mixed_effects_dea.rds")
 ```{r}
 degs <- degs_ext %>%
   group_by(niche) %>%
-  slice(1:30) %>%
+  dplyr::slice(1:30) %>%
   pull(gene) %>%
   unique()
 ```

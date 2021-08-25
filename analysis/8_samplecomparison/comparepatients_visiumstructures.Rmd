@@ -265,6 +265,18 @@ ComplexHeatmap::Heatmap(cell_props)
 niche_filter <- colnames(cell_props)
 ```
 
+```{r}
+atlas_meta %>%
+  dplyr::filter(niche %in% niche_filter) %>%
+  ggplot(., aes(x = UMAP_1, y = UMAP_2, 
+                       color = niche)) +
+  geom_point(size = 0.05) +
+  theme_classic() +
+  guides(colour = guide_legend(override.aes = list(size=10)))
+
+```
+
+
 We can know repeat our plots and perform actual tests to identify which niches are changing
 
 ```{r}
@@ -280,9 +292,26 @@ cell_info %>%
   ylab("") + xlab("n_spots")  
 ```
 
-Defining a basic Wilcoxon two-sided test 
+Running a Kruskal-Wallis test
 
 ```{r}
+niche_test <- cell_info %>%
+  dplyr::filter(niche %in% niche_filter) %>%
+  dplyr::select(cell_prop, patient_group, niche) %>%
+  group_by(niche) %>%
+  nest() %>%
+  mutate(k_wallis_test = map(data, function(dat) {
+    broom::tidy(kruskal.test(cell_prop ~ patient_group, data = dat))
+  })) %>%
+  select(niche, k_wallis_test) %>%
+  unnest() %>%
+  ungroup() %>%
+  mutate(corr_pvalue = p.adjust(p.value))
+```
+
+Defining a basic Wilcoxon two-sided test (NOT RUN)
+
+```{r,eval=F}
 run_wilcox_all <- function(prop_data) {
   
   prop_data_group <- prop_data[["patient_group"]] %>%
@@ -307,7 +336,7 @@ run_wilcox_all <- function(prop_data) {
 
 Testing one patient group vs the rest
 
-```{r, warning = F, message = F}
+```{r, warning = F, message = F, eval = F}
 niche_test <- cell_info %>%
   dplyr::filter(niche %in% niche_filter) %>%
   dplyr::select(niche, cell_prop, patient_group) %>%
@@ -329,13 +358,16 @@ Plotting boxplots of proportions
 
 ```{r}
 cell_info %>%
-  dplyr::filter(niche %in% sign_niches) %>%
+  dplyr::filter(niche %in% niche_filter) %>%
+  left_join(niche_test, by = "niche") %>%
+  mutate(niche = ifelse(corr_pvalue <= 0.15,
+                        paste0(niche,"*"), niche)) %>%
   ggplot(aes(x = patient_group, y =cell_prop, fill = patient_group)) +
   geom_boxplot() +
   theme_classic() +
   theme(axis.text = element_text(size = 10),
         axis.text.x = element_text(angle = 90)) +
-  facet_wrap(.~ niche, nrow = 2, scales = "free_y") +
+  facet_wrap(.~ niche, nrow = 4, scales = "free_y") +
   ylab("niche proportion")
 ```
 
