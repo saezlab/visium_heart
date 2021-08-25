@@ -21,10 +21,10 @@ library(progeny)
 #' @param confidence_lbls: confidence of regulons picked
 #' @return A Seurat object with TF activities in dorothea assay
 add_tf_activities <- function(visium_slide, 
-                             species = "human",
-                             confidence_lbls = c("A","B","C","D"),
-                             verbose = FALSE,
-                             assay = "RNA"){
+                              species = "human",
+                              confidence_lbls = c("A","B","C","D"),
+                              verbose = FALSE,
+                              assay = "RNA"){
   if (species == "mouse"){
     
     data(dorothea_mm, package = "dorothea")
@@ -39,12 +39,12 @@ add_tf_activities <- function(visium_slide,
   regulons = regulons %>% 
     filter(confidence %in% confidence_lbls)
   
-  tf_act_mat <- run_viper(input = as.matrix(visium_slide[[assay]]@data), 
-                         regulons = regulons, 
-                         options = list(nes = TRUE, 
-                                        method = "scale", minsize = 4, 
-                                        eset.filter = FALSE,
-                                        verbose = verbose))
+  tf_act_mat <- run_viper(input = GetAssayData(visium_slide, assay = assay),
+                          regulons = regulons, 
+                          options = list(nes = TRUE, 
+                                         method = "scale", minsize = 4, 
+                                         eset.filter = FALSE,
+                                         verbose = verbose))
   
   ## Repeated regulon RFXAP
   # tf_act_mat = tf_act_mat[!duplicated(tf_act_mat),]
@@ -52,6 +52,8 @@ add_tf_activities <- function(visium_slide,
   
   return(visium_slide)
 }
+
+
 
 
 #' @param visium_slide: Seurat object with SCT assay
@@ -65,26 +67,37 @@ add_path_activities <- function(visium_slide,
                                assay = "RNA"){
   
   if(species == "mouse"){
-    
-    progeny_scores <- progeny::progeny(expr = as.matrix(visium_slide[[assay]]@data),
-                                      scale=TRUE, 
-                                      organism="Mouse", 
-                                      top=top, 
-                                      perm=1, 
-                                      verbose = verbose)
-    
+    model <- progeny::getModel(organism = "Mouse", top = top)
+    common_genes <- intersect(rownames(GetAssayData(visium_slide, assay = assay)), rownames(model))
+    progeny_scores <- scale(t(progeny_scores))
     visium_slide[['progeny']] <- CreateAssayObject(counts = t(progeny_scores))
+    
+    #progeny_scores <- progeny::progeny(expr = GetAssayData(visium_slide, assay = assay),
+    #                                  scale=TRUE, 
+    #                                  organism="Mouse", 
+    #                                  top=top, 
+    #                                  perm=1, 
+    #                                  verbose = verbose)
+    
+    #visium_slide[['progeny']] <- CreateAssayObject(counts = t(progeny_scores))
     
   }else if(species == "human"){
     
-    progeny_scores <- progeny::progeny(expr = as.matrix(visium_slide[[assay]]@data),
-                             scale=TRUE, 
-                             organism="Human", 
-                             top=top, 
-                             perm=1,
-                             verbose = verbose)
+    model <- progeny::getModel(organism = "Human", top = top)
+    common_genes <- intersect(rownames(GetAssayData(visium_slide, assay = assay)), rownames(model))
+    progeny_scores <- t(model)[, common_genes] %*% GetAssayData(visium_slide, assay = assay)[common_genes, ]
+    progeny_scores <- scale(t(progeny_scores))
     
-    visium_slide[['progeny']] <- CreateAssayObject(data = t(progeny_scores))
+    visium_slide[['progeny']] <- CreateAssayObject(counts = t(progeny_scores))
+    
+    #progeny_scores <- progeny::progeny(expr = GetAssayData(visium_slide, assay = assay),
+    #                         scale=TRUE, 
+    #                         organism="Human", 
+    #                         top=top, 
+    #                         perm=1,
+    #                         verbose = verbose)
+    
+    #visium_slide[['progeny']] <- CreateAssayObject(data = t(progeny_scores))
     
   }
   
