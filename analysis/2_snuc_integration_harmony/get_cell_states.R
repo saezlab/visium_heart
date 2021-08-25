@@ -69,11 +69,48 @@ true_ix <- integrated_data@meta.data[, class_label] %in% cell_type
 # subset based on filtering and quickly get characteristic profile
 integrated_data <- integrated_data[ , true_ix]
 
+# subset the object in 2 main categories: batch and patient
+
+integrated_data <- SplitObject(integrated_data, split.by = "batch")
+
+# First get all the most variable genes per patient per batch
+
+hvg_batch <- map(integrated_data, function(batch_x) {
+  
+  batch_x <- SplitObject(batch_x, split.by = "patient")
+  
+  hvg_list <- map(batch_x, function(x) {
+    
+    DefaultAssay(x) <- "RNA"
+    
+    x <- FindVariableFeatures(x, selection.method = "vst", 
+                              nfeatures = 3000)
+    
+    x@assays[["RNA"]]@var.features
+    
+  }) %>% unlist()
+  
+  hvg_list <- table(hvg_list) %>%
+    sort(decreasing = TRUE)
+  
+  gene_selection <- hvg_list[1:3000] %>% names()
+  
+})
+
+hvg_list <- unlist(hvg_batch) %>% table() %>% sort(decreasing = T)
+
+# Genes that are stable among batches
+gene_selection <- hvg_list[hvg_list == 2] %>% names()
+
+# Re-integrate data
+
+integrated_data <- reduce(integrated_data,
+                          merge,
+                          merge.data = TRUE)
+
 integrated_data <- integrated_data %>%
-  FindVariableFeatures(selection.method = "vst", 
-                       nfeatures = 1500) %>% 
   ScaleData(verbose = FALSE) %>% 
-  RunPCA(pc.genes = integrated_data@var.genes, 
+  RunPCA(features = gene_selection, 
          npcs = 30, 
          verbose = FALSE) 
 
@@ -86,8 +123,9 @@ original_pca_plt <- DimPlot(object = integrated_data,
 
 # Integrate the data -----------------------
 integrated_data <- RunHarmony(integrated_data, 
-                              "orig.ident", 
-                              plot_convergence = TRUE)
+                              c("orig.ident", "patient", "batch"), 
+                              plot_convergence = TRUE,
+                              max.iter.harmony = 20)
 
 # Corrected dimensions -----------------------
 corrected_pca_plt <- DimPlot(object = integrated_data, 

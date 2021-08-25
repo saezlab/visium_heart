@@ -34,6 +34,11 @@ option_list <- list(
               default = "RNA", 
               type = 'character',
               help = "default assays to integrate"),
+  make_option(c("--batch_file"), 
+              action= "store", 
+              default = NULL, 
+              type = 'character',
+              help = "file that contains 3 columns: orig.ident, patient, batch"),
   make_option(c("--optimize"), 
               action = "store_true", 
               default = FALSE, 
@@ -43,7 +48,7 @@ option_list <- list(
               action ="store", 
               default = 0.5, 
               type = 'double',
-              help = "minimum number of genes for ORA")
+              help = "clustering resolution if not optimized")
 )
 
 # Parse the parameters ---------------------------------------------------------------------------------
@@ -57,15 +62,43 @@ for(user_input in names(opt)) {
 }
 
 slide_files <- list.files(path)
+
 # Because of incompatibility with objects objects should be appended manually
 slide_files_path <- set_names(paste0(path,slide_files), gsub(pattern = "[.]rds",
                                                              replacement = "",
                                                              slide_files))
 
 integrated_data <- map(slide_files_path, readRDS)
+
 print("You managed to load everything")
 print("Object size")
 print(object.size(integrated_data))
+
+# Calculate HVG per sample - Here we assume that batch and patient effects aren't as strong
+# since cell-types and niches should be greater than the number of batches
+
+hvg_list <- map(integrated_data, function(x) {
+  
+  DefaultAssay(x) <- def_assay
+  
+  x <- FindVariableFeatures(x, selection.method = "vst", 
+                            nfeatures = 3000)
+  
+  x@assays[[def_assay]]@var.features
+  
+}) %>% unlist()
+
+hvg_list <- table(hvg_list) %>%
+  sort(decreasing = TRUE)
+
+gene_selection_plt <- hvg_list %>% enframe() %>% 
+  group_by(value) %>% 
+  mutate(value = as.numeric(value)) %>%
+  summarize(ngenes = length(name)) %>% 
+  ggplot(aes(x = value, y = ngenes)) + 
+  geom_bar(stat = "identity")
+
+gene_selection <- hvg_list[1:3000] %>% names()
 
 # Create merged object ---------------------------------
 integrated_data <- reduce(integrated_data,
@@ -81,10 +114,8 @@ DefaultAssay(integrated_data) <- def_assay
 
 # Process it before integration -----------------------
 integrated_data <- integrated_data %>%
-  FindVariableFeatures(selection.method = "vst", 
-                       nfeatures = 3000) %>% 
   ScaleData(verbose = FALSE) %>% 
-  RunPCA(pc.genes = integrated_data@var.genes, 
+  RunPCA(features = gene_selection, 
          npcs = 30, 
          verbose = FALSE) 
 
@@ -93,9 +124,19 @@ original_pca_plt <- DimPlot(object = integrated_data,
               pt.size = .1, 
               group.by = "orig.ident")
 
+# Add batch info
+# must contain orig.ident 
+batch_info <- read_csv(batch_file)
+batch_covars <- colnames(batch_info)
+
+tmp_meta <- integrated_data@meta.data %>%
+  left_join(batch_info, by = "orig.ident")
+
+integrated_data@meta.data <- bind_cols(integrated_data@meta.data, tmp_meta[, batch_covars[-1]])
+
 # Integrate the data -----------------------
 integrated_data <- RunHarmony(integrated_data, 
-                              "orig.ident", 
+                              batch_covars, 
                               plot_convergence = TRUE,
                               assay.use = def_assay,
                               max.iter.harmony = 20)
@@ -216,6 +257,7 @@ umap_clustering <- DimPlot(object = integrated_data,
 
 pdf(file = out_fig_file, height = 10, width = 12)
 
+print(gene_selection_plt)
 print(original_pca_plt)
 print(corrected_pca_plt)
 print(umap_sample)
