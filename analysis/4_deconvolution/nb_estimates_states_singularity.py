@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 # read data
 
-sc_data = sc.read("/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/results/integration/integrated_data_fordeconv.h5ad")
+sc_data = sc.read("./integrated_rnasamples_ann.h5ad")
 
 # remove cells and genes with 0 counts everywhere
 sc.pp.filter_cells(sc_data, min_genes=1)
@@ -50,33 +50,58 @@ sc_data = sc_data[:,(np.array(np.log10(sc_data.var['nonz_mean']) > nonz_mean_cut
 
 sc_data.raw = sc_data
 
+# Here we generate iterations to make a subsample
+perc_filter = 0.4
+cell_types = np.unique(sc_data.obs[["cell_type"]].values)
+# Here we generate the number of cells per cell_type
+cell_types_n = {ct: np.sum(ct == sc_data.obs[["cell_type"]].values) for ct in cell_types}
+# Here we define the number of cells to subsample
+cell_types_sample = {i: int(np.floor(cell_types_n[i] * perc_filter)) for i in cell_types_n}
 
-from cell2location import run_regression
+from numpy.random import default_rng
 
-r, adata_sc_data = run_regression(sc_data, # input data object]
+iters = list(range(1,6))
 
-                   verbose=True, return_all=True,
+for i in iters:
+    
+    rng = default_rng(seed=i)
+    
+    barcodes = []
+    
+    for ct in cell_types_sample:
+        ct_barcodes = sc_data.obs[sc_data.obs['cell_type'] == ct].index
+        nsample = cell_types_sample[ct]
+        sample_barcodes = np.random.choice(ct_barcodes, size = nsample, replace = False)
+        barcodes.extend(sample_barcodes)
+    
+    sampled_ct_data = sc_data[barcodes,]
 
-                   train_args={
-                    'covariate_col_names': ['deconv_col'], # column listing cell type annotation
-                    'sample_name_col': 'orig_ident', # column listing sample ID for each cell
-                    'tech_name_col': None,
-                    'stratify_cv': 'deconv_col', # stratify cross-validation by cell type annotation
-                    'n_epochs': 100, 
-                    'minibatch_size': 1024,
-                    'learning_rate': 0.01,
-                    'use_cuda': True, # use GPU?
-                    'train_proportion': 0.9, # proportion of cells in the training set (for cross-validation)
-                    'l2_weight': True,  # uses defaults for the model
+    from cell2location import run_regression
 
-                    'readable_var_name_col': 'SYMBOL', 'use_raw': True},
+    r, adata_sc_data = run_regression(sampled_ct_data, # input data object]
 
-                   model_kwargs={}, # keep defaults
-                   posterior_args={}, # keep defaults
+                       verbose=True, return_all=True,
 
-                   export_args={'path': '/net/data.isilon/ag-saez/bq_rramirez/visiumMI_revisions/results/deconvolution/c2l_statescollapsed/', # where to save results
-                                'save_model': True, # save pytorch model?
-                                'run_name_suffix': '_statescollapsed'})
+                       train_args={
+                        'covariate_col_names': ['cell_type'], # column listing cell type annotation
+                        'sample_name_col': 'orig_ident', # column listing sample ID for each cell
+                        'tech_name_col': 'batch',
+                        'stratify_cv': 'cell_type', # stratify cross-validation by cell type annotation
+                        'n_epochs': 100, 
+                        'minibatch_size': 1024,
+                        'learning_rate': 0.01,
+                        'use_cuda': True, # use GPU?
+                        'train_proportion': 0.9, # proportion of cells in the training set (for cross-validation)
+                        'l2_weight': True,  # uses defaults for the model
 
-reg_mod = r['mod']
+                        'readable_var_name_col': 'SYMBOL', 'use_raw': True},
+
+                       model_kwargs={}, # keep defaults
+                       posterior_args={}, # keep defaults
+
+                       export_args={'path': './nb_estimates/', # where to save results
+                                    'save_model': True, # save pytorch model?
+                                    'run_name_suffix': '_celltypes' + str(i)})
+
+    reg_mod = r['mod']
 
