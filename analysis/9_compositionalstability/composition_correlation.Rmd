@@ -20,27 +20,42 @@ First get all the slide files that should contain and assay inside them with cel
 
 ```{r}
 # Get all data files -----------------------------------------------------------------------
-slide_files_folder <- "./visium_results_manuscript/deconvolution/c2l_statescollapsed/location_models/density_tables_rds/"
+slide_files_folder <- "./results/deconvolution_models/location_models/density_tables_rds/"
 slide_files <- list.files(slide_files_folder)
 slide_files_full <- paste0(slide_files_folder, 
                            slide_files)
 slide_ids <- gsub("[.]rds", "", slide_files)
 
 # Patient annotation -------------------------------------------------------------------------
-condition_dictionary <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
-                                   sep = "\t", header = T) %>%
-  mutate_all(as.character) %>%
-  dplyr::select(Visium, New.Ids, snRNA) %>%
-  dplyr::rename(slide = Visium,
-                scell = snRNA,
-                patient = New.Ids)
+snrna_anns <- readRDS("./markers/snrna_patient_anns_revisions.rds") %>%
+  dplyr::select(sample_id, patient, region) %>%
+  dplyr::rename("snrna_sample_id" = sample_id)
+
+visium_anns <- readRDS("./markers/visium_patient_anns_revisions.rds") %>%
+  dplyr::rename("visium_sample_id" = sample_id)
+
+condition_dictionary <- left_join(snrna_anns, visium_anns, by = c("patient", "region"))
+
+condition_dictionary <- condition_dictionary %>%
+  group_by(snrna_sample_id, patient, region, visium_sample_id) %>%
+  nest() %>%
+  dplyr::filter(visium_sample_id %in% slide_ids) %>%
+  dplyr::select(-data)
+
+#condition_dictionary <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
+#                                   sep = "\t", header = T) %>%
+#  mutate_all(as.character) %>%
+#  dplyr::select(Visium, New.Ids, snRNA) %>%
+#  dplyr::rename(slide = Visium,
+#                scell = snRNA,
+#                patient = New.Ids)
 ```
 
 I extract cell2location cell count matrices from visium processed data.
 
 ```{r}
-deconv_res<- tibble("slide_path" = slide_files_full,
-                     "slide" = slide_ids) %>%
+deconv_res <- tibble("slide_path" = slide_files_full,
+                     "visium_sample_id" = slide_ids) %>%
   dplyr::mutate(deconv_mats = map(slide_path, ~ readRDS(.x) %>%
                                     as.data.frame() %>%
                                     rownames_to_column("spot_id") %>%
@@ -48,7 +63,6 @@ deconv_res<- tibble("slide_path" = slide_files_full,
                                                  names_to = "cell_type",
                                                  values_to = "c2l_value"))) %>%
   dplyr::select(-slide_path) %>%
-  left_join(condition_dictionary) %>%
   unnest()
 ```
 
@@ -56,11 +70,11 @@ Then we filter all location scores that repreesent less than 1 cell per spot giv
 
 ```{r}
 # prior from nuclei quantification
-max_n_cells_spot <- 5
+max_n_cells_spot <- 8
 value_cutoff <- 1/max_n_cells_spot
 
 deconv_res <- deconv_res %>%
-  group_by(slide, spot_id) %>%
+  group_by(visium_sample_id, spot_id) %>%
   mutate(n_cells_spot =  sum(c2l_value)) %>%
   mutate(c2l_value_prop = c2l_value / n_cells_spot) %>%
   dplyr::filter(n_cells_spot > 0) %>%
@@ -72,122 +86,268 @@ Per slide we will quantify number of cells and final proportions
 
 ```{r}
 spatial_props <- deconv_res %>%
-  group_by(patient, cell_type) %>%
+  group_by(visium_sample_id, cell_type) %>%
   summarize(sp_n_cells = sum(c2l_value)) %>%
   ungroup() %>%
-  group_by(patient) %>%
-  mutate(sp_prop_cells = sp_n_cells/sum(sp_n_cells))
+  group_by(visium_sample_id) %>%
+  mutate(sp_prop_cells = sp_n_cells/sum(sp_n_cells)) %>%
+  nest() %>%
+  rename("spatial_props" = data)
 ```
 
 ## Single nuc data
 
 ```{r}
 # Scell data meta --------------------------------------------------------------------------
-scell_meta <- readRDS("visium_results_manuscript/integration/ps_integrated_data_fordeconv.rds")[[1]][["annotations"]]
+scell_meta <- readRDS("./processed_snrnaseq/integration/ps_integrated_rnasamples_ann.rds")[[1]][["annotations"]]
 
 # Generate cell type counts -----------------------------------------------------------
 scell_props <- scell_meta %>%
-  group_by(orig.ident, deconv_col) %>%
+  group_by(orig.ident, cell_type) %>%
   summarize(sn_n_cells = length(orig.ident)) %>%
   mutate(sn_prop_cells = sn_n_cells/sum(sn_n_cells)) %>%
-  dplyr::rename(scell = orig.ident,
-                cell_type = deconv_col) %>%
-  left_join(condition_dictionary)
+  dplyr::rename(scell = orig.ident) %>%
+  dplyr::mutate(cell_type = gsub("-","_", cell_type)) %>%
+  dplyr::rename("snrna_sample_id" = scell) %>%
+  nest() %>%
+  rename("scell_props" = data)
 ```
 
 ## Comparisons
 
 ```{r}
-all_props <- left_join(spatial_props, scell_props,
-                       by = c("cell_type", "patient"))
+all_data <- condition_dictionary %>%
+  left_join(spatial_props) %>%
+  left_join(scell_props)
 ```
-
-### Correlations
-
-Let's correlate the states, these are in theory very unstable, since states are continous. 
 
 ```{r}
-ggplot(all_props, aes(x = log(sp_prop_cells),
-                      y = log(sn_prop_cells),
-                      color = cell_type)) +
-  geom_point() +
-  facet_wrap(.~patient)
+all_data <- all_data %>% 
+  mutate(joined_props = map2(spatial_props, scell_props, left_join, by = "cell_type")) %>%
+  dplyr::select(-c("spatial_props", "scell_props")) %>%
+  unnest()
 ```
 
-```{r, warning = FALSE}
-state_cors <- all_props %>%
+## Correlation of all estimations
+
+```{r}
+all_corrs <- all_data %>%
   na.omit() %>%
-  group_by(patient) %>%
+  ungroup()
+
+cor(log10(all_corrs$sn_prop_cells), log10(all_corrs$sp_prop_cells), method = "spearman")
+
+```
+
+```{r}
+all_corrs_plt <- all_data %>%
+  na.omit() %>%
+  ungroup() %>%
+  mutate(pid = paste0(snrna_sample_id, "_", visium_sample_id, "_",
+                      patient, "_", region)) %>%
+  ggplot(aes(x = log10(sp_prop_cells), 
+             y = log10(sn_prop_cells), 
+             color = cell_type)) +
+  geom_point() +
+  ylab("snRNA cell type log10(proportions)") +
+  xlab("spatial cell type log10(proportions)")
+
+plot(all_corrs_plt)
+```
+
+## Correlation of patient specific cell-proportions
+
+```{r}
+patient_corrs <- all_data %>%
+  na.omit() %>%
+  summarize(prop_cor = cor(log10(sp_prop_cells), log10(sn_prop_cells), 
+                           use = "complete.obs", method = "spearman"))
+
+mean(patient_corrs$prop_cor)
+```
+
+```{r, fig.width= 15, fig.height= 12}
+patient_corrs_plt <- all_data %>%
+  na.omit() %>%
+  ungroup() %>%
+  mutate(pid = paste0(snrna_sample_id, "_", visium_sample_id, "_",
+                      patient, "_", region)) %>%
+  ggplot(aes(x = log10(sp_prop_cells), 
+             y = log10(sn_prop_cells), 
+             color = cell_type)) +
+  geom_point() +
+  facet_wrap(.~pid,scales = "free") +
+  ylab("snRNA cell type log10(proportions)") +
+  xlab("spatial cell type log10(proportions)")
+
+plot(patient_corrs_plt)
+```
+
+## Correlation of cell-type specific proportions
+
+```{r}
+ct_corrs <- all_data %>%
+  na.omit() %>%
+  ungroup() %>%
+  group_by(cell_type) %>%
+  summarize(prop_cor = cor(log10(sp_prop_cells), log10(sn_prop_cells), 
+                           use = "complete.obs", method = "spearman"))
+
+mean(ct_corrs$prop_cor)
+```
+
+```{r}
+patient_corrs_plt <- all_data %>%
+  na.omit() %>%
+  ungroup() %>%
+  ggplot(aes(x = log10(sp_prop_cells), 
+             y = log10(sn_prop_cells))) +
+  geom_point() +
+  facet_wrap(.~cell_type, scales = "free") +
+  ylab("snRNA cell type log10(proportions)") +
+  xlab("spatial cell type log10(proportions)")
+
+plot(patient_corrs_plt)
+```
+
+# Test of changes of compositions between conditions
+
+## First RNAseq
+
+```{r}
+snrna_anns <- readRDS("./markers/snrna_patient_anns_revisions.rds")
+
+patient_sn_props <- scell_props %>%
+  unnest() %>%
+  ungroup() %>% 
+  complete(., nesting(snrna_sample_id, cell_type),
+           fill = list(sn_n_cells = 0, sn_prop_cells = 0)) %>%
+  left_join(snrna_anns, by = c("snrna_sample_id" = "sample_id")) %>%
+  dplyr::select(snrna_sample_id, sn_prop_cells, patient_group, cell_type)
+
+sn_kwallis_res <- patient_sn_props %>%
+  group_by(cell_type) %>%
   nest() %>%
-  mutate(cor_res = map(data, function(x) {
-    
-    dat <- na.omit(x)
-    broom::tidy(cor.test(log10(dat$sp_prop_cells), 
-                         log10(dat$sn_prop_cells), 
-                         method = "spearman"))
-    
+  mutate(kwallis_test = map(data, function(dat){
+    broom::tidy(kruskal.test(sn_prop_cells ~ patient_group, data = dat))
   })) %>%
-  dplyr::select(patient, cor_res) %>%
+  dplyr::select(kwallis_test) %>%
   unnest() %>%
   ungroup() %>%
-  mutate(cor.p.value= p.adjust(p.value))
+  mutate(p_corr = p.adjust(p.value))
 
-print(state_cors)
-```
 
-What happens if we first group these annotations into major cells?
-
-```{r}
-cell_dictionary <- scell_meta %>%
-  dplyr::select(cell_type, deconv_col) %>%
-  unique() %>%
-  dplyr::mutate(cell_type = ifelse(deconv_col == "VSMCs",
-                                   "VSMCs", cell_type)) %>%
-  dplyr::rename(mjr_ct = cell_type,
-                cell_type = deconv_col)
+print(sn_kwallis_res)
 ```
 
 ```{r}
-mjr_all_props <- all_props %>%
-  left_join(cell_dictionary) %>%
-  ungroup() %>%
-  group_by(patient, mjr_ct) %>%
-  summarise(sp_n_cells = sum(sp_n_cells),
-            sp_prop_cells = sum(sp_prop_cells), 
-            sn_n_cells = sum(sn_n_cells),
-            sn_prop_cells = sum(sn_prop_cells))
+p_thresh <- 0.15
+
+sign_cells <- sn_kwallis_res %>%
+  dplyr::filter(p_corr < 0.15) %>%
+  pull(cell_type)
+
+patient_sn_props %>%
+  mutate(cell_type = ifelse(cell_type %in% sign_cells,
+                            paste0(cell_type,"*"), cell_type)) %>%
+ ggplot(aes(x = patient_group, y = sn_prop_cells, color = patient_group)) +
+  geom_boxplot() +
+  facet_wrap(.~cell_type, ncol = 4, scales = "free_y")
 ```
+
+## Then Spatial
 
 ```{r}
-ggplot(mjr_all_props, aes(x = log(sp_prop_cells),
-                      y = log(sn_prop_cells),
-                      color = mjr_ct)) +
-  geom_point() +
-  facet_wrap(.~patient)
-```
+visium_anns <- readRDS("./markers/visium_patient_anns_revisions.rds") 
 
-```{r, warning = FALSE}
-state_cors <- mjr_all_props %>%
-  na.omit() %>%
-  group_by(patient) %>%
+patient_visium_props <- spatial_props %>%
+  unnest() %>%
+  ungroup() %>% 
+  complete(., nesting(visium_sample_id, cell_type),
+           fill = list(sp_n_cells = 0, sp_prop_cells = 0)) %>%
+  left_join(visium_anns, by = c("visium_sample_id" = "sample_id")) %>%
+  dplyr::select(visium_sample_id, sp_prop_cells, patient_group, cell_type)
+
+sp_kwallis_res <- patient_visium_props %>%
+  group_by(cell_type) %>%
   nest() %>%
-  mutate(cor_res = map(data, function(x) {
-    
-    dat <- na.omit(x)
-    broom::tidy(cor.test(log10(dat$sp_prop_cells), 
-                         log10(dat$sn_prop_cells), 
-                         method = "spearman"))
-    
+  mutate(kwallis_test = map(data, function(dat){
+    broom::tidy(kruskal.test(sp_prop_cells ~ patient_group, data = dat))
   })) %>%
-  dplyr::select(patient, cor_res) %>%
+  dplyr::select(kwallis_test) %>%
   unnest() %>%
   ungroup() %>%
-  mutate(cor.p.value= p.adjust(p.value))
+  mutate(p_corr = p.adjust(p.value))
 
-print(state_cors)
+print(sp_kwallis_res)
 ```
 
 ```{r}
-sessionInfo()
+p_thresh <- 0.15
+
+sign_cells <- sp_kwallis_res %>%
+  dplyr::filter(p_corr < 0.15) %>%
+  pull(cell_type)
+
+patient_visium_props %>%
+  mutate(cell_type = ifelse(cell_type %in% sign_cells,
+                            paste0(cell_type,"*"), cell_type)) %>%
+ ggplot(aes(x = patient_group, y = sp_prop_cells, color = patient_group)) +
+  geom_boxplot() +
+  facet_wrap(.~cell_type, ncol = 4, scales = "free_y")
 ```
+
+## Combined
+
+```{r}
+all_patient_props <- rbind(patient_visium_props %>%
+                           dplyr::select(-visium_sample_id) %>%
+                           rename("prop_cells" = sp_prop_cells),
+                           patient_sn_props %>%
+                           dplyr::select(-snrna_sample_id) %>%
+                           rename("prop_cells" = sn_prop_cells))
+
+all_kwallis_res <- all_patient_props %>%
+  group_by(cell_type) %>%
+  nest() %>%
+  mutate(kwallis_test = map(data, function(dat){
+    broom::tidy(kruskal.test(prop_cells ~ patient_group, data = dat))
+  })) %>%
+  dplyr::select(kwallis_test) %>%
+  unnest() %>%
+  ungroup() %>%
+  mutate(p_corr = p.adjust(p.value))
+
+print(all_kwallis_res)
+```
+
+```{r}
+patient_visium_props %>%
+  mutate(cell_type = ifelse(cell_type %in% sign_cells,
+                            paste0(cell_type,"*"), cell_type)) %>%
+ ggplot(aes(x = patient_group, y = sp_prop_cells, color = patient_group)) +
+  geom_boxplot() +
+  facet_wrap(.~cell_type, ncol = 4, scales = "free_y")
+```
+
+
+```{r}
+p_thresh <- 0.15
+
+sign_cells <- all_kwallis_res %>%
+  dplyr::filter(p_corr < 0.15) %>%
+  pull(cell_type)
+
+all_patient_props %>%
+  mutate(cell_type = ifelse(cell_type %in% sign_cells,
+                            paste0(cell_type,"*"), cell_type)) %>%
+ ggplot(aes(x = patient_group, y = prop_cells, color = patient_group)) +
+  geom_boxplot() +
+  facet_wrap(.~cell_type, ncol = 4, scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+
+
+
 

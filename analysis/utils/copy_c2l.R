@@ -5,13 +5,13 @@
 library(tidyverse)
 
 # Identifying location models
-root_path <- "./results/deconvolution/c2l_statescollapsed/"
+root_path <- "./results/deconvolution_models/"
 c2l_files <- list.files(root_path)
 c2l_files <- c2l_files[grepl("LocationModel", c2l_files)] %>%
   gsub("[.]/", "", .) %>%
   paste0(.,"/")
 
-samples <- gsub("/","", map_chr(strsplit(c2l_files,"_"), last))
+samples <- gsub("/","", map_chr(strsplit(c2l_files,"genes_"), last))
 plots_file <- "plots"
 density <- "W_cell_density.csv"  
 density_q <- "W_cell_density_q05.csv"
