@@ -23,7 +23,7 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
 
 # First for each slide we will create metavariables that flag the location of a cell-type in a spot
 
-c2l_assay <- "c2l_major_props"
+c2l_assay <- "c2l_props"
 
 cell_props <- map(visium_df$visium_file, function(visium_file) {
   
@@ -36,13 +36,12 @@ cell_props <- map(visium_df$visium_file, function(visium_file) {
 
 names(cell_props) <- paste0("sample", visium_df$sample)
 
-cell_props <- reduce(cell_props, rbind)
-
+cell_props <- purrr::reduce(cell_props, rbind)
 
 cor_mat <- cor(cell_props,method = "spearman")
 
-
-Heatmap(cor_mat)
-
+pdf("./results/tissue_structure/colocalization/c2l_props_correlation.pdf", height = 7, width = 8)
+plot(Heatmap(cor_mat))
+dev.off()
 
 
