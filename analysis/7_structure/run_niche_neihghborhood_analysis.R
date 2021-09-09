@@ -63,7 +63,8 @@ run_neighborhood_analysis <- function(sample_name, slide_file, seurat_file, enri
     dplyr::select(cell_id, opt_clust_integrated) %>%
     group_by(opt_clust_integrated) %>%
     summarise(n_spots = length(opt_clust_integrated)) %>%
-    dplyr::filter(n_spots >=30)
+    mutate(prop_spots = n_spots/sum(n_spots)) %>%
+    dplyr::filter(prop_spots > 0.01)
   
   slide_selected_niches <- selected_niches[selected_niches %in% niche_meta$opt_clust_integrated]
   

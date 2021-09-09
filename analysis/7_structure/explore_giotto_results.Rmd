@@ -1,0 +1,240 @@
+---
+title: "Niche structural analysis"
+author: "Ricardo Ramirez"
+date: "8/26/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(survcomp)
+library(uwot)
+library(ComplexHeatmap)
+```
+
+## Introduction
+
+We assumed that integration and clustering of the spots in the visium slides would allow us to unbiasedly identify tissue structures without the need of dissection.
+
+We found a collection of niches that are shared among samples and represent cell communities that may have a predetermined structure in space.
+
+We ran Giotto's neighborhood analysis using niche labels as categories to identify spatial dependencies. For a given pair of niches it estimates an interaction score that suggest if 2 niches tend to co-occur in space or if they tend to be separated from each other.
+
+# Interaction scores separate samples based on clinical description
+
+```{r}
+#Loading patient grouping 
+patient_meta <- readRDS("./markers/visium_patient_anns_revisions.rds")
+
+# Loading neighborhood analysis 
+giotto_results_folder <- "./results/niche_mapping/giotto/result_tables"
+
+file_names <- list.files(giotto_results_folder, 
+                         full.names = F)
+
+sample_names <- gsub("_neighbor_res.rds", "", file_names)
+
+giotto_res <- map(set_names(paste0(giotto_results_folder, "/",
+                                  file_names),
+                            sample_names), readRDS) %>%
+  enframe("sample") %>%
+  unnest()
+
+```
+
+# Summarize niche information
+
+In order to properly understand how different niches distribute in space we calculate the median of the PI_value
+
+```{r}
+summ_giotto_res <- giotto_res %>%
+  group_by(cell_1, cell_2) %>%
+  summarize(median_PI_value = median(PI_value))
+
+
+```
+
+This is just manipulation of the data to find the most harmonic order using hierarchical clustering
+
+```{r, fig.height=5, fig.width=6}
+# Make complete matrix, fill with 0
+summ_giotto_res_mat <- summ_giotto_res %>%
+  pivot_wider(names_from = cell_1, values_from = median_PI_value, values_fill = 0) %>%
+  column_to_rownames("cell_2") %>%
+  as.matrix()
+
+summ_giotto_res_mat <- Matrix::forceSymmetric(summ_giotto_res_mat, uplo="L")
+niche_order <- hclust(dist(summ_giotto_res_mat))
+niche_order <- niche_order$labels[niche_order$order]
+summ_giotto_res_mat <- summ_giotto_res_mat[niche_order,niche_order]
+
+summ_giotto_res_mat[upper.tri(summ_giotto_res_mat)] <- NA
+
+as.data.frame(as.matrix(summ_giotto_res_mat)) %>%
+  rownames_to_column("cell_2") %>%
+  pivot_longer(-cell_2, values_to = "median_PI", names_to = "cell_1")  %>%
+  na.omit() %>%
+  mutate(cell_2 = factor(cell_2, levels = niche_order),
+         cell_1 = factor(cell_1, levels = niche_order)) %>%
+  ggplot(aes(x = cell_1, y = cell_2, fill = median_PI)) + 
+  geom_tile() + 
+  scale_fill_gradient2() +
+  theme_classic() +
+  theme(axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+### Performing PCA and UMAP on interaction scores of hetero interactions
+
+```{r}
+# First, I am interested in knowing how samples distribute when using
+# interaction values
+
+# I perform a PCA on the PI_values, filling with 0's
+
+PI_mat <- giotto_res %>%
+  dplyr::filter(type_int == "hetero") %>%
+  dplyr::select(sample, unified_int, PI_value) %>%
+  pivot_wider(names_from = unified_int, values_from = PI_value, values_fill = 0) %>%
+  column_to_rownames("sample")
+
+# Filter by excesive 0's 
+
+PI_mat <- PI_mat[, colSums(PI_mat != 0) > 14]
+
+pi_pcs_res <- prcomp(x = PI_mat)
+
+prop_sd <- pi_pcs_res$sdev/sum(pi_pcs_res$sdev)
+cum_prop <- cumsum(prop_sd)
+PC_label <- paste0("PC", seq(1,length(pi_pcs_res$sdev),1))
+
+tibble("prop_sd" = prop_sd,
+       "PC" = PC_label) %>%
+  ggplot(aes(x = factor(PC,
+                        levels = PC_label), 
+             y = prop_sd)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90))
+
+pi_pcs <- pi_pcs_res$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample_id") %>%
+  left_join(patient_meta)
+
+pi_pcs %>% ggplot(aes(x = PC1, y = PC2, 
+           color = patient_group, 
+           label = region)) +
+  geom_point(size = 1) +
+  ggrepel::geom_text_repel() +
+  theme_classic()
+```
+
+```{r}
+# UMAP
+set.seed(241099)
+
+pi_umap <- umap(PI_mat, 
+                 n_neighbors = 5, n_epochs = 1000) %>%
+  as.data.frame() %>%
+  mutate(sample_id = rownames(PI_mat)) %>%
+  left_join(patient_meta)
+
+pi_umap %>% ggplot(aes(x = V1, y = V2, 
+                      color = patient_group, 
+                      label = region)) +
+  geom_point(size = 1) +
+  ggrepel::geom_text_repel() +
+  theme_classic()
+```
+
+Conclusion: Tissue organization is somehow conserved beetween conditions and reflects the phenotype
+
+# General patterns of tissue organization
+
+We found that niche dependencies change between healthy and borderzone tissue and chronic and ischemic, extremely likely because those niches are not represented properly in these tissues
+
+```{r}
+pca_importances <- pi_pcs_res$rotation %>% 
+  as.data.frame() %>%
+  rownames_to_column("interaction") %>%
+  pivot_longer(-interaction,
+               names_to = "PC",
+               values_to = "Importance") %>%
+  arrange(PC, -abs(Importance)) %>%
+  group_by(PC) %>%
+  slice(1:10) %>%
+  left_join(tibble("prop_cum" = cum_prop,
+       "PC" = PC_label)) %>%
+  ungroup() %>%
+  dplyr::filter(prop_cum < 60)
+
+differential_interactions <- pca_importances$interaction %>% 
+  table() %>% 
+  sort(decreasing = T) %>%
+  names()
+
+differential_interactions <- differential_interactions[1:20]
+```
+
+```{r}
+plt_mat <- PI_mat[patient_meta$sample_id, differential_interactions]
+rownames(plt_mat) <- paste0(patient_meta$sample_id, "_", patient_meta$region)
+ComplexHeatmap::Heatmap(t(plt_mat),show_row_dend = F, show_column_dend = F)
+```
+
+What about things that don't change:
+
+We will pick all interactions that are significant 
+
+```{r}
+n_samples_prop = 28 * 0.5
+
+general_interactions_ids <- giotto_res %>%
+  mutate(lowest_p = ifelse(p.adj_higher < p.adj_lower,
+                           p.adj_higher, p.adj_lower)) %>%
+  dplyr::filter(type_int == "hetero",
+                lowest_p < 0.05) %>%
+  group_by(unified_int) %>%
+  mutate(n_appearances = length(lowest_p)) %>%
+  dplyr::filter(n_appearances > n_samples_prop) %>%
+  ungroup() %>%
+  arrange(n_appearances, unified_int) %>%
+  group_by(unified_int) %>%
+  nest() %>%
+  ungroup() %>%
+  slice(1:40) %>%
+  pull(unified_int)
+
+general_interactions <-  giotto_res %>%
+  dplyr::filter(unified_int %in% general_interactions_ids)
+
+general_hmap <- general_interactions %>%
+  ggplot(aes(x = sample, 
+             y = unified_int, 
+             fill = PI_value)) +
+  geom_tile() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  scale_fill_gradient2(midpoint = 0, na.value = 'white')
+
+plot(general_hmap)
+```
+
+
+```{r}
+general_mat <- general_interactions %>%
+  unnest() %>%
+  dplyr::select(sample, unified_int, PI_value) %>%
+  pivot_wider(names_from = unified_int, values_from = PI_value, values_fill = 0) %>%
+  column_to_rownames("sample")
+
+general_mat <- general_mat[patient_meta$sample_id, ]
+rownames(general_mat) <- paste0(patient_meta$sample_id, "_", patient_meta$region)
+ComplexHeatmap::Heatmap(t(general_mat),show_row_dend = F, show_column_dend = F)
+
+```
+
+

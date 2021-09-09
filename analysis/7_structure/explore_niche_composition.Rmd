@@ -19,6 +19,7 @@ library(tidyverse)
 library(Seurat)
 library(ComplexHeatmap)
 library(circlize)
+library(compositions)
 col_fun = colorRamp2(c(0, 1), c("black", "yellow"))
 ```
 
@@ -27,70 +28,64 @@ col_fun = colorRamp2(c(0, 1), c("black", "yellow"))
 Load annotations of visium samples
 
 ```{r}
-sample_dict <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
-                                   sep = "\t", header = T) %>%
-  mutate_all(as.character) %>%
-  dplyr::select(Visium, New.Ids) %>%
-  dplyr::rename(orig.ident = Visium,
-                patient_sample = New.Ids) %>%
-  dplyr::mutate(patient = map_chr(strsplit(patient_sample, "_"), 
-                                  ~.x[[1]]),
-                area = map_chr(strsplit(patient_sample, "_"), 
-                               ~.x[[2]]))
+sample_dict <- read.table("./markers/visium_annotations_ext.txt", 
+                          sep = "\t", header = T)
+sample_dict
 ```
 
 Load all of the data and visualize the proportions
 
 ```{r}
 # Get atlas cell-info ------------------------------------------------------------------------------------
-atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["annotations"]]
+atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides_niches.rds")[[1]][["annotations"]]
 
-# Cell-type composition -----------------------------------
+# Niche composition -----------------------------------
 cell_info <- atlas_meta %>%
-  group_by(orig.ident, opt_clust_integrated) %>%
+  dplyr::group_by(orig.ident, opt_clust_integrated) %>%
   summarize(ncells = length(opt_clust_integrated)) %>%
   dplyr::mutate(all_sample_cells = sum(ncells)) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(cell_prop = ncells/all_sample_cells) %>%
-  left_join(sample_dict) %>%
-  rename(sample = orig.ident,
-         niche_ct_meanprops_id = opt_clust_integrated) %>%
-  mutate(niche_ct_meanprops_id = paste0("niche_", niche_ct_meanprops_id))
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  mutate(niche = paste0("niche_", opt_clust_integrated))
 
-head(cell_info)
+# Niche composition in matrix
+cell_props <- cell_info %>%
+  dplyr::select(orig.ident, niche, cell_prop) %>%
+  pivot_wider(values_from = cell_prop,
+              names_from = niche) %>%
+  column_to_rownames(var = "orig.ident") %>%
+  acomp() %>%
+  as.data.frame()
+
+cell_props[is.na(cell_props)] <- 0
+
+head(cell_props)
+dim(cell_props)
+
+# Sort them as in the meta-dictionary
+cell_props <- cell_props[sample_dict$sample_id,]
+rownames(cell_props) <- sample_dict$pid
+
+#Not all niches are informative for patient comparison(these are structures that are specific to a patient, noise, etc)
+# So let's cut all the niches that aren't particularly present in 5 samples (minimum patient group size)
+niche_filter <- colSums(cell_props > 0.01) >= 5
+cell_props <- cell_props[, niche_filter]
+niche_filter <- colnames(cell_props)
 ```
+
+## Filtering
+
+First filter all niches that represent less than 1% and all the niches that aren't represented in at least 5 samples
 
 ```{r}
-cell_info %>%
-  ggplot(aes(x = ncells,
-           y = patient_sample,
-           fill = niche_ct_meanprops_id)) + 
-  geom_bar(position="fill", 
-           stat="identity") +
-  theme(legend.position = "bottom") +
-  ylab("") + xlab("n_spots")  
+cell_info <- cell_info %>%
+  dplyr::filter(cell_prop > 0.01,
+                niche %in% niche_filter)
+
+cell_info <- cell_info %>%
+  dplyr::select(orig.ident, niche)
 ```
-
-
-```{r, fig.height=6, fig.width=8}
-cell_info_mat <- cell_info %>%
-  dplyr::select(niche_ct_meanprops_id, 
-                patient_sample,
-                cell_prop) %>%
-  pivot_wider(names_from = niche_ct_meanprops_id, values_from  = cell_prop) %>%
-  column_to_rownames("patient_sample") %>%
-  as.matrix() 
-
-cell_info_mat %>%
-  Heatmap(col = col_fun)
-
-cell_info_mat[is.na(cell_info_mat)] <- 0
-
-cell_info_mat %>%
-  scale() %>%
-  Heatmap()
-```
-
 
 ## Compositions of cell types within each niche
 
@@ -100,6 +95,7 @@ visium_folder = "./processed_visium/objects/"
 visium_files <- list.files(visium_folder, full.names = F)
 visium_samples <- gsub("[.]rds", "", visium_files)
 
+# This creates a vector of mean proportions of all spots belin
 visium_df <- tibble(visium_file = paste0(visium_folder, 
                                          visium_files),
                     sample = visium_samples) %>%
@@ -114,7 +110,7 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
                         niche_cells <- WhichCells(visium_slide, idents = c(niche))
                         
                         prop_mat <- GetAssayData(visium_slide, 
-                                                 assay = "c2l_major_props") %>%
+                                                 assay = "c2l_props") %>%
                           as.matrix()
                         
                         prop_mat <- prop_mat[, niche_cells, drop = F] %>%
@@ -124,6 +120,10 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
   })) %>%
   unnest_longer("niche_ct_meanprops")
 
+```
+
+
+```{r}
 visium_df <- visium_df %>%
   dplyr::select(sample, niche_ct_meanprops, niche_ct_meanprops_id) %>%
   mutate(niche_ct_meanprops = map(niche_ct_meanprops, function(x) {
@@ -135,56 +135,91 @@ visium_df <- visium_df %>%
     
     df_props %>% rownames_to_column("cell_type")
     
-  })) %>% unnest() %>%
-  arrange(niche_ct_meanprops_id, cell_type, sample) %>%
-  left_join(cell_info, by = c("sample", "niche_ct_meanprops_id")) %>%
-  mutate(niche_id = paste0(patient_sample, ".", niche_ct_meanprops_id))
+  })) %>% unnest()
+```
+
+Finally aligned with the data we had before
+
+```{r}
+cell_info <- cell_info %>%
+  left_join(visium_df, by = c("orig.ident" = "sample",
+                              "niche" = "niche_ct_meanprops_id"))
+
+cell_info <- cell_info %>%
+  dplyr::arrange(niche, orig.ident) %>%
+  dplyr::mutate(pid = paste0(orig.ident, "_",niche))
+
+pat_order <- cell_info$pid %>% unique()
+
 ```
 
 ### Plotting
 
-```{r, fig.height=16, fig.width=5}
-props_mat <- visium_df %>%
-  dplyr::select(cell_type, niche_id, mean_prop) %>%
-  pivot_wider(values_from = mean_prop,
-              names_from = cell_type) %>%
-  column_to_rownames("niche_id") %>%
-  as.matrix()
+```{r}
+cell_info %>%
+  ggplot(aes(x = cell_type, 
+             y = factor(pid,
+                        levels = pat_order), 
+             fill = mean_prop)) +
+  geom_tile() +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))
+```
 
-#pdf("./processed_visium/integration/niche_compositions/mean_props.pdf",
-#    width = 8, height = 16)
+### Pairwise wilcoxon
 
-draw(Heatmap(scale(props_mat), cluster_rows = F,
-             row_split = factor(rownames(props_mat) %>% strsplit("[.]") %>% map_chr(., ~.x[2]))))
+```{r}
+run_wilcox_all <- function(prop_data) {
+  
+  prop_data_group <- prop_data[["niche"]] %>%
+    unique() %>%
+    set_names()
+  
+  map(prop_data_group, function(g) {
+    
+    test_data <- prop_data %>%
+      mutate(test_group = ifelse(niche == g,
+                                 "target", "rest"))
+      
+    wilcox.test(mean_prop ~ test_group, 
+                data = test_data,
+                alternative = "less") %>%
+      broom::tidy()
+  }) %>% enframe("patient_group") %>%
+    unnest()
+    
+}
+```
 
-#dev.off()
+```{r}
+wilcox_res <- cell_info %>%
+  group_by(cell_type) %>%
+  nest() %>%
+  mutate(wlcx_res = map(data, run_wilcox_all)) %>%
+  select(wlcx_res) %>%
+  unnest()
+```
+
+```{r}
+wilcox_res %>%
+  dplyr::filter(p.value < 0.05) %>%
+  print(n = 50)
+```
+
+```{r, fig.height=4, fig.width=8}
+wilcox_res %>%
+  mutate(pcorr = p.adjust(p.value)) %>%
+  mutate(significant = ifelse(pcorr < 0.15, "yes", "no")) %>%
+  ggplot(aes(x = patient_group, y = cell_type, size = -log10(pcorr), color = significant)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5)) +
+  scale_color_discrete(type = c("black", "gold"))
 ```
 
 
-### What if we filter niches from slides where there's not enough representation?
 
-```{r, fig.height=16, fig.width=5}
-ncells_niche <- 30
 
-props_mat <- visium_df %>%
-  dplyr::filter(ncells > ncells_niche) %>%
-  dplyr::select(cell_type, niche_id, mean_prop) %>%
-  pivot_wider(values_from = mean_prop,
-              names_from = cell_type) %>%
-  column_to_rownames("niche_id") %>%
-  as.matrix()
 
-draw(Heatmap(scale(props_mat), cluster_rows = F,
-             row_split = factor(rownames(props_mat) %>% strsplit("[.]") %>% map_chr(., ~.x[2]))))
-```
 
-```{r, fig.height=16, fig.width=5}
-draw(Heatmap((props_mat), cluster_rows = F, col = col_fun,
-             row_split = factor(rownames(props_mat) %>% strsplit("[.]") %>% map_chr(., ~.x[2]))))
-```
 
-### What if we don't force thee order
 
-```{r, fig.height=16, fig.width=5}
-draw(Heatmap((props_mat), cluster_rows = T, col = col_fun))
-```
+
