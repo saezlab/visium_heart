@@ -27,7 +27,7 @@ mask_state_matrix <- function(cell_props, cell_states,
 
 filter_state_assay <- function(cts, 
                                slide, 
-                               ref_assay = "c2l_major_props",
+                               ref_assay = "c2l_props",
                                state_assay = "cell_states") {
   
   cell_props <- GetAssayData(slide, assay = ref_assay) %>% t()
@@ -52,7 +52,7 @@ filter_state_assay <- function(cts,
 
 # Get individual slide info ---------------------------------------------
 visium_folder = "./processed_visium/objects/"
-out_folder = "./visium_results_manuscript/deconvolution/state_scores/"
+out_folder = "./results/state_scores/"
 visium_files <- list.files(visium_folder, full.names = F)
 visium_samples <- gsub("[.]rds", "", visium_files)
 
@@ -60,13 +60,12 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
                                          visium_files),
                     sample = visium_samples,
                     out_file = paste0(out_folder, 
-                                      sample,"_state_map.pdf")) %>%
-  mutate()
+                                      sample,"_state_map.pdf"))
 
 # Create function to mask spots where the cell may not be present ---------------------------------------------
-cts <- set_names(c(0.1, 0.1, 0.1, 0.1, 0.1),
-                 c("cardiomyocytes", "endothelial-cells", 
-                   "fibroblasts", "macrophages", "pericytes"))
+cts <- set_names(c(0.125, 0.125, 0.125),
+                 c("cardiomyocyte", "endothelial", 
+                   "fibroblast"))
 
 walk2(visium_df$visium_file, visium_df$out_file, function(visium_file, out_file) { 
   

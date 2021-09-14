@@ -22,7 +22,7 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
   mutate()
 
 # Add module score ---------------------------------------------
-gsets <- readRDS(file = "./visium_results_manuscript/ct_data/dea/cellstate_gsets.rds")
+gsets <- readRDS(file = "./results/ct_data/state_genesets.rds")
 
 walk(visium_df$visium_file, function(visium_file) { 
   print(visium_file)
