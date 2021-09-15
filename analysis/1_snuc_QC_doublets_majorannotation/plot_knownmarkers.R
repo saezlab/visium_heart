@@ -96,6 +96,11 @@ alt_markers <- list(
   dplyr::select(gene, cell_type) %>%
   as.data.frame()
 
+# Gene markers from Christoph but coming from first iteration of data
+
+ck_markers <- read_table2("/beegfs/work/hd_wh241/MI_revisions/markers/CK_mi_markers.txt") %>%
+  as.data.frame()
+
 # Make wrapper function
 
 plt_markers <- function(slide_file, out_fig_file) {
@@ -112,9 +117,15 @@ plt_markers <- function(slide_file, out_fig_file) {
                              identity_label = id_label, 
                              GSC = alt_markers)
   
-  pdf(out_fig_file, width = 16)
+  ck_hmap <- domarker_hmap(SeuratObject = scell_obj,
+                               assay = used_assay,
+                               identity_label = id_label, 
+                               GSC = ck_markers)
+  
+  pdf(out_fig_file, width = 19, height = 15)
   print(home_hmap)
   print(hubner_hmap)
+  print(ck_hmap)
   dev.off()
   
 }

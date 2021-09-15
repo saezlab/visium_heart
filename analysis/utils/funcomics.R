@@ -39,7 +39,7 @@ add_tf_activities <- function(visium_slide,
   regulons = regulons %>% 
     filter(confidence %in% confidence_lbls)
   
-  tf_act_mat <- run_viper(input = GetAssayData(visium_slide, assay = assay),
+  tf_act_mat <- run_viper(input = as.matrix(GetAssayData(visium_slide, assay = assay)),
                           regulons = regulons, 
                           options = list(nes = TRUE, 
                                          method = "scale", minsize = 4, 
