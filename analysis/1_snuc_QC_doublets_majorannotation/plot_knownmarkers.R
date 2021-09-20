@@ -17,6 +17,11 @@ option_list <- list(
               default = FALSE, 
               type = 'logical',
               help = "is the path added a folder with structure ./%sample.rds"),
+  make_option(c("--downsampling"), 
+              action = "store_true", 
+              default = FALSE, 
+              type = 'logical',
+              help = "should the object subsampled to the 50%?"), 
   make_option(c("--used_assay"), 
               action ="store", 
               default = "RNA", 
@@ -106,6 +111,32 @@ ck_markers <- read_table2("/beegfs/work/hd_wh241/MI_revisions/markers/CK_mi_mark
 plt_markers <- function(slide_file, out_fig_file) {
   
   scell_obj <- readRDS(slide_file)
+  
+  if(downsampling == TRUE) {
+    
+    print("downsampling to 50%")
+    
+    set.seed(241099)
+    
+    cells <- scell_obj@meta.data %>%
+      rownames_to_column("cell_id") %>%
+      dplyr::select(cell_id, id_label) %>%
+      group_by_at(id_label) %>%
+      nest() %>%
+      mutate(data = map(data, ~.x[[1]])) %>%
+      mutate(n_cells = map(data, length)) %>%
+      unnest(n_cells) %>%
+      mutate(n_cells = floor(n_cells * 0.5)) %>%
+      mutate(sampled_cells = map2(data, n_cells, function(x, y) {
+        sample(x, y)
+      })) %>%
+      pull(sampled_cells) %>%
+      unlist()
+    
+    scell_obj <- scell_obj[, cells]
+    
+  }
+  
   
   home_hmap <- domarker_hmap(SeuratObject = scell_obj,
                 assay = used_assay,
