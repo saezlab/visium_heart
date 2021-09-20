@@ -69,6 +69,15 @@ true_ix <- integrated_data@meta.data[, class_label] %in% cell_type
 # subset based on filtering and quickly get characteristic profile
 integrated_data <- integrated_data[ , true_ix]
 
+# filter MT and ribosomal genes:
+mt_genes <- row.names(integrated_data)[grepl("^MT-", row.names(integrated_data))]
+rps_genes <- row.names(integrated_data)[grepl("^RPS", row.names(integrated_data))]
+mrp_genes <- row.names(integrated_data)[grepl("^MRP", row.names(integrated_data))]
+rpl_genes <- row.names(integrated_data)[grepl("^RPL", row.names(integrated_data))]
+rb_genes <- c(rps_genes, mrp_genes, rpl_genes)
+
+integrated_data <- integrated_data[!rownames(integrated_data) %in% c(rb_genes, mt_genes), ]
+
 # subset the object in 2 main categories: batch and patient
 
 integrated_data <- SplitObject(integrated_data, split.by = "batch")
