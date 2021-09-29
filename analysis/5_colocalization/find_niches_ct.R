@@ -13,6 +13,7 @@ library(tidyverse)
 library(clustree)
 library(uwot)
 library(scran)
+library(cluster)
 
 # Here we will get the matrix of compositions using c2l results ----------------------------------
 
