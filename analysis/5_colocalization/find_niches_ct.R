@@ -8,22 +8,19 @@
 #' 4) Show the cell-type specific responses per niche
 
 library(compositions)
-library(Seurat)
+#library(Seurat)
 library(tidyverse)
 library(clustree)
 library(uwot)
+library(scran)
 
-# Here we will get the matrix of compositions using c2l results
+# Here we will get the matrix of compositions using c2l results ----------------------------------
 
 c2l_folder <- "./results/deconvolution_models/location_models/density_tables_rds/"
 assay_name <- "c2l"
 
-# Define resolution - You have to do this manually
-niche_resolution <- "ILR_snn_res.1"
-
-# Get patient meta-data -----------------------------------------------------------------
-sample_dict <- read.table("./markers/visium_annotations_ext.txt", 
-                          sep = "\t", header = T)
+# Define resolution - You have to do this manually -----------------------------------------------
+niche_resolution <- "ILR_snn_res.0.4"
 
 # Get atlas meta:
 atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["annotations"]] %>%
@@ -68,68 +65,95 @@ baseILR <- ilrBase(x = integrated_compositions,
 cell_ilr <- as.matrix(ilr(integrated_compositions, baseILR))
 colnames(cell_ilr) <- paste0("ILR_", 1:ncol(cell_ilr))
 
-# Make Seurat object
-seurat_ilr <- CreateSeuratObject(t(cell_ilr %>% as.data.frame() %>% as.matrix() ), 
-                                 project = "SeuratProject", 
-                                 assay = "ILR",
-                                 in.cells = 0, min.features = 0, names.field = 1,
-                                 names.delim = "_", meta.data = atlas_meta %>% column_to_rownames("row_id"))
+# Make community graph
+k_vect <- c(10, 15, 20, 25, 30, 50)
+k_vect <- set_names(k_vect, paste0("k_",k_vect))
 
-# Neighbor graph
+cluster_info <- map(k_vect, function(k) {
+  print(k)
+  print("Generating SNN")
+  snn_graph <- scran::buildSNNGraph(x = t(cell_ilr %>% as.data.frame() %>% as.matrix()), k = k)
+  print("Louvain clustering")
+  clust.louvain <- igraph::cluster_louvain(snn_graph)
+  clusters <- tibble(cluster = clust.louvain$membership,
+                     spot_id = rownames(cell_ilr))
+})
 
-seurat_ilr <- ScaleData(seurat_ilr, 
-                           verbose = FALSE, 
-                           features = rownames(seurat_ilr))
+cluster_info <- cluster_info %>% 
+  enframe() %>%
+  unnest() %>%
+  pivot_wider(names_from = name,
+              values_from = cluster)
 
-seurat_ilr <- RunPCA(seurat_ilr,
-                     verbose = FALSE,
-                     features = rownames(seurat_ilr),
-                     approx=FALSE)
+# For each k, make a 60% subsampling -----------------------------------------------------
+set.seed(241099)
 
-seurat_ilr <- FindNeighbors(seurat_ilr)
+k_vect <- set_names(names(k_vect))
 
-seurat_ilr@graphs$ILR_snn <- neighbor_graph$snn
-seurat_ilr@graphs$ILR_nn <- neighbor_graph$nn
+subsampling_mean_ss <- map(k_vect, function(k) {
+  print(k)
+  
+  cluster_info_summary <- cluster_info %>%
+    group_by_at(k) %>%
+    summarize(ncells = floor(n() * 0.3))
+  
+  cells <- cluster_info %>%
+    dplyr::select_at(c("spot_id", k)) %>%
+    group_by_at(k) %>%
+    nest() %>%
+    left_join(cluster_info_summary) %>%
+    mutate(data = map(data, ~ .x[[1]])) %>%
+    mutate(selected_cells = map2(data, ncells, function(dat,n) {
+      sample(dat, n)
+    })) %>%
+    pull(selected_cells) %>%
+    unlist()
+  
+  dist_mat <- dist(cell_ilr[cells, ])
+  
+  k_vect <- purrr::set_names(cluster_info[[k]], cluster_info[["spot_id"]])[cells]
+  
+  sil <- cluster::silhouette(x = k_vect, dist = dist_mat)
+  
+  mean(sil[, 'sil_width'])
+  
+})
 
-print("Created network")
+subsampling_mean_ss <- enframe(subsampling_mean_ss) %>% 
+  unnest() %>%
+  dplyr::filter()
 
-seurat_ilr <- FindClusters(seurat_ilr, resolution = seq(0.4, 1.6, 0.2))
-
-clustree_plt <- clustree(seurat_ilr, 
-                         prefix = paste0(DefaultAssay(seurat_ilr), 
-                                         "_snn_res."))
-
-pdf("./results/niche_mapping/ct_niches/ct_ILR_clustree.pdf", height = 15, width = 15)
-
-plot(clustree_plt)
-
-dev.off()
-
-saveRDS(seurat_ilr, file = "./processed_visium/integration/integrated_slides_ct_ILR_srt.rds")
-
+niche_resolution <- dplyr::filter(subsampling_mean_ss, 
+                       value == max(value)) %>%
+  pull(name)
 
 # Create UMAP and plot the compositions
 
 comp_umap <- umap(cell_ilr, 
-                  n_neighbors = 30, n_epochs = 1000) %>%
+                  n_neighbors = 30, 
+                  n_epochs = 1000,
+                  metric = "cosine") %>%
   as.data.frame() %>%
   mutate(row_id = rownames(cell_ilr))
 
+comp_umap <- comp_umap[, 1:3]
+
 comp_umap <- comp_umap %>%
-  left_join(seurat_ilr@meta.data %>%
-              rownames_to_column("row_id"), by ="row_id")
+  left_join(cluster_info, 
+            by = c("row_id" = "spot_id"))
 
-
+saveRDS(comp_umap, file = "./results/niche_mapping/ct_niches/umap_compositional.rds")
 
 pdf("./results/niche_mapping/ct_niches/ct_ILR_umap.pdf", height = 6, width = 7)
 
 plt <- comp_umap %>%
   ggplot(aes(x = V1, y = V2, 
-             color = ILR_snn_res.1)) +
+             color = as.character(k_50))) +
   ggrastr::geom_point_rast(size = 0.1) +
   theme_classic() +
   xlab("UMAP1") +
-  ylab("UMAP2")
+  ylab("UMAP2") +
+  guides(colour = guide_legend(override.aes = list(size=4)))
 
 plot(plt)
 
@@ -156,9 +180,9 @@ walk(cts, function(ct){
 
 dev.off()
 
-cluster_cols <- grepl("snn", colnames(comp_umap))
-cluster_cols <- colnames(comp_umap)[cluster_cols]
-cluster_info <- comp_umap[,c("row_id", "orig.ident", cluster_cols)]
+
+cluster_info <- comp_umap %>%
+  dplyr::select(-c("V1", "V2"))
 
 # What are the cells that define the niches?
 
@@ -170,10 +194,16 @@ integrated_compositions <- integrated_compositions %>%
 integrated_compositions <- integrated_compositions %>%
   left_join(cluster_info)
 
+sample_names <- base::strsplit(integrated_compositions[["row_id"]], "[..]")
+
+integrated_compositions <- integrated_compositions %>%
+  mutate(orig.ident = strsplit(row_id, "[..]") %>%
+           map_chr(., ~ .x[1]))
+
 # Select a niche resolution
 niche_summary_pat <- integrated_compositions %>%
   dplyr::select_at(c("row_id", "cell_type", "ct_prop", "orig.ident", niche_resolution)) %>%
-  rename("ct_niche" = niche_resolution) %>%
+  dplyr::rename("ct_niche" = niche_resolution) %>%
   mutate(ct_niche = paste0("niche_", ct_niche)) %>%
   group_by(orig.ident, ct_niche, cell_type) %>%
   summarize(mean_ct_prop = mean(ct_prop))
@@ -249,8 +279,8 @@ mean_ct_prop_plt <- niche_summary %>%
 
 # Finally describe the proportions of those niches in all the data
 cluster_counts <- cluster_info %>%
-  dplyr::select_at(c("row_id", "orig.ident", niche_resolution)) %>%
-  rename("ct_niche" = niche_resolution) %>%
+  dplyr::select_at(c("row_id", niche_resolution)) %>%
+  dplyr::rename("ct_niche" = niche_resolution) %>%
   mutate(ct_niche = paste0("niche_", ct_niche)) %>%
   group_by(ct_niche) %>%
   summarise(nspots = length(ct_niche)) %>%
@@ -272,6 +302,5 @@ pdf("./results/niche_mapping/ct_niches/characteristic_ct_niches.pdf", height = 6
 plot(niche_summary_plt)
 
 dev.off()
-
 
 saveRDS(cluster_info, "./results/niche_mapping/ct_niches/niche_annotation_ct.rds")
