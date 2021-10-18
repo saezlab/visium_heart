@@ -44,7 +44,7 @@ option_list <- list(
               help = "column in data_path that contains the selected classes"),
   make_option(c("--start_res"), 
               action= "store", 
-              default = 0.2, 
+              default = 0.5, 
               type = 'double',
               help = "inital resolution for optimization")
 )
@@ -111,6 +111,15 @@ hvg_list <- unlist(hvg_batch) %>% table() %>% sort(decreasing = T)
 # Genes that are stable among batches
 gene_selection <- hvg_list[hvg_list == 2] %>% names()
 
+# Genes that aren't part of the background
+marker_list_cts <- readRDS("./markers/pb_ct_marker_list.rds")
+exclude_cts <- names(marker_list_cts)
+exclude_cts <- exclude_cts[!(exclude_cts %in% cell_type)]
+marker_list_cts <- marker_list_cts[exclude_cts] %>%
+  unlist() %>% unique()
+
+gene_selection <- gene_selection[!(gene_selection %in% marker_list_cts)]
+
 # Re-integrate data
 
 integrated_data <- reduce(integrated_data,
@@ -153,7 +162,7 @@ integrated_data <- FindNeighbors(integrated_data,
                                  reduction = "harmony", 
                                  dims = 1:30)
 
-seq_res <- seq(start_res, 1, 0.2)
+seq_res <- seq(start_res, 1, 0.1)
 
 # Delete previous clustering
 integrated_data@meta.data <- integrated_data@meta.data[, !grepl("RNA_snn_res",
