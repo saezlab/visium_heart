@@ -5,6 +5,7 @@
 
 library(SingleCellExperiment)
 library(scater)
+library(scran)
 library(tidyverse)
 library(HDF5Array)
 library(uwot)
@@ -19,7 +20,9 @@ source("./analysis/utils/pseudobulk_utils.R")
 
 # This analysis must be done at patient_region level to take into account repetitions
 
-summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_samples_filt){
+summarize_state <- function(ct_folder, ct_alias, exception, 
+                            perc_thrsh, n_samples_filt,
+                            background_exclude = NULL){
   
   # Define outs -------------------------------------------------------
   gene_filter_out <- paste0(ct_folder, ct_alias, "/gene_filter_df.rds")
@@ -32,6 +35,8 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   de_out <- paste0(ct_folder, ct_alias, "/state_de.txt")
   tf_out <- paste0(ct_folder, ct_alias, "/state_tf.txt")
   all_out <- paste0(ct_folder, ct_alias, "/states_funcomics.pdf")
+  cor_plt <- paste0(ct_folder, ct_alias, "/states_cor.pdf")
+  reg_net <- paste0("./reg_nets/processed/", ct_alias, ".txt")
   
   # Read object and filter gene expression ---------------------------------------
   print("Reading scell object and filtering lowly expressed genes")
@@ -48,9 +53,6 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
     as.data.frame() %>%
     rownames_to_column("cell_id") %>%
     left_join(sc_meta, by = "cell_id") 
-  
-  # Free memory
-  rm(sc_data)
   
   # Get state specific genes ----------------------------------------
   niche_info <- readRDS(gene_filter_out)
@@ -104,10 +106,37 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   
   # Pseudobulk analysis -----------------------------------------------
   
+  # Get the data, and filter for states that we find useful
+  
   pb_data <- get_pseudobulk_mat(pb_path = pb_path,
                      patient_annotations = patient_annotations,
                      filtered_states = filtered_states,
                      niche_info = niche_info)
+  
+  # Second, filter out genes that are background
+  
+  if(!is.null(background_exclude)) {
+    
+    marker_list_cts <- readRDS("./markers/pb_ct_marker_list.rds")
+    
+    exclude_cts <- names(marker_list_cts)
+    
+    exclude_cts <- exclude_cts[!(exclude_cts %in% background_exclude)]
+    
+    marker_list_cts <- marker_list_cts[exclude_cts] %>%
+      unlist() %>% 
+      unique()
+    
+    current_genes <- pb_data$gex %>%
+      rownames()
+    
+    current_genes <- current_genes[!(current_genes %in% marker_list_cts)]
+    
+    pb_data$gex <- pb_data$gex[current_genes, ]
+    
+  }
+  
+  # Here we also need to exclude background markers
   
   pb_data <- filt_notinf_pbprofiles(pb_data = pb_data, pb_perc = 0.01)
   
@@ -115,29 +144,65 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   pb_gex <- pb_data$gex
   
   # Normalizing
-  pb_gex <- pb_gex %>%
-    edgeR_filtering(expression_matrix = .,
-                    min.count = 10, 
-                    min.prop = 0.5) %>%
+  pb_gex_norm <- pb_gex %>%
     cpm_norm(expression_matrix = .)
   
   # Long object
-  pb_cpm_long <- pb_gex %>%
+  pb_cpm_long <- pb_gex_norm %>%
     as.data.frame() %>%
     rownames_to_column("gene") %>%
     pivot_longer(-gene, names_to = "col_id", values_to = "expr") %>%
     left_join(pb_meta, by = "col_id")
   
-  # Run mlm -------------------------------------
-  degs_ext <- run_mlm(pb_cpm_long = pb_cpm_long, mlm_res = mlm_res)
+  # Run differential expression analysis -------------------------------------
+  print("Running pseudobulk differential analysis")
+  
+  degs_ext <- run_edgeR(pb_gex = pb_gex,
+                        pb_meta = pb_meta) %>%
+    dplyr::rename("state" = name)
+  
+  degs_ext %>%
+    dplyr::filter(logFC > 0) %>% 
+  write.table(., col.names = T, 
+              row.names = F, quote = F, sep = "\t",
+              file = mlm_res)
+  
+  # Correlation of states
+  cor_states <- degs_ext %>%
+    dplyr::select(state, gene, logFC) %>%
+    pivot_wider(names_from = state, 
+                values_from = logFC,
+                values_fill = 0) %>%
+    column_to_rownames("gene") %>%
+    as.matrix() %>%
+    cor(.,method = "spearman") 
+  
+  order_states <- hclust(as.dist(1-cor_states))
+  order_states <- order_states$labels[order_states$order]
+  
+  cor_states <- cor_states %>%
+    as.data.frame() %>%
+    rownames_to_column("state_a") %>%
+    pivot_longer(-state_a, names_to = "state_b", values_to = "spearman_cor") %>%
+    mutate(state_a = factor(state_a, levels = order_states),
+           state_b = factor(state_b, levels = order_states))
+  
+  cor_plt <- ggplot(cor_states, aes(x = state_b, y = state_a, fill = spearman_cor)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle=90, 
+                                     hjust = 1, 
+                                     vjust = 0.5)) +
+    scale_fill_gradient2(limits = c(-1,1))
   
   # Plotting marker genes
   
   plot_genes <- degs_ext %>% 
-    group_by(state) %>%
-    mutate(corr_pval = p.adjust(pval)) %>%
+    mutate(corr_pval = FDR) %>%
     dplyr::filter(corr_pval < 0.15) %>%
-    slice(1:25) %>%
+    dplyr::filter(logFC > 0) %>%
+    dplyr::arrange(state, -logFC) %>%
+    group_by(state) %>%
+    dplyr::slice(1:5) %>%
     pull(gene) %>%
     unique()
   
@@ -161,7 +226,7 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
     dplyr::filter(gene %in% plot_genes) %>%
     mutate(gene = factor(gene,
                          levels = plot_genes)) %>%
-    ggplot(aes(y = gene, x = state, fill = t_value)) +
+    ggplot(aes(y = gene, x = state, fill = logFC)) +
     geom_tile() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
     scale_fill_gradient2()
@@ -170,8 +235,8 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   # This is to enrich in visium slides
   
   state_genes <- degs_ext %>% 
-    arrange(state, -t_value) %>%
-    dplyr::filter(pval <= 0.15, t_value > 0) %>%
+    arrange(state, -logFC) %>%
+    dplyr::filter(FDR <= 0.15, logFC > 0) %>%
     group_by(state) %>%
     dplyr::slice(1:200) %>%
     dplyr::select(gene, state) %>%
@@ -184,7 +249,8 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   # Funcomics -------------------------------
   
   # GSEA -------
-  gsea_res <- run_gsea(degs_ext = degs_ext,gsea_out = gsea_out)
+  gsea_res <- run_gsea(degs_ext = degs_ext,
+                       gsea_out = gsea_out)
   
   # PROGENY -------
   progeny_res <- run_progeny_t(degs_ext = degs_ext, progeny_out = progeny_out)
@@ -205,12 +271,13 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   # Dorothea + wmean -------
   
   dorothea_res <- run_dorothea_t(degs_ext = degs_ext,
-                                 tf_out = tf_out)
+                                 tf_out = tf_out,
+                                 reg_net = reg_net)
   
   dorothea_res_sign <- dorothea_res %>%
     arrange(condition, -score) %>%
     group_by(condition) %>%
-    slice(1:10) 
+    dplyr::slice(1:10) 
   
   dorothea_plt <- dorothea_res %>%
     dplyr::select(condition, source, score) %>%
@@ -235,10 +302,9 @@ summarize_state <- function(ct_folder, ct_alias, exception, perc_thrsh, n_sample
   lower_panel <- cowplot::plot_grid(lower_panel_left, lower_panel_right, nrow = 1, rel_widths = c(0.5, 0.4))
   
   pdf(all_out, height = 18, width = 18)
-  
   all_panels <- (cowplot::plot_grid(upper_panel,lower_panel, ncol = 1, rel_heights = c(0.35,0.5)))
   plot(all_panels)
-  
+  plot(cor_plt)
   dev.off()
   
   return(all_panels)
@@ -268,7 +334,7 @@ loadNfilter_sce <- function(sc_data_file, gene_filter_out, exception) {
     sc_meta <- colData(sc_data) %>%
       as.data.frame() %>%
       rownames_to_column("cell_id") %>%
-      dplyr::filter(opt_state != paste0("state", exception))
+      dplyr::filter(! opt_state %in% paste0("state", exception))
     
     sc_data <- sc_data[, sc_meta[["cell_id"]]]
   }
@@ -291,7 +357,8 @@ loadNfilter_sce <- function(sc_data_file, gene_filter_out, exception) {
   expressed_genes <- counts(sc_data) > 0
   gene_ix <- rowSums(expressed_genes) > min_spots
   sc_data <- sc_data[gene_ix, ]
-  
+  expressed_genes <- expressed_genes[gene_ix, ]
+    
   print("Keeping genes expressed in at least perc_thrsh in a state")
   
   # Then for each niche we will test specifically if the gene can be considered expressed
@@ -421,8 +488,6 @@ get_pseudobulk_mat <- function(pb_path, patient_annotations,
   pb_gex <- pb_gex[niche_info$selected_genes %>% unlist() %>% unique(),
                    niche_filter_ix]
   
-  
-  
   return(list("gex" = pb_gex, "meta" = pb_meta))
   
 }
@@ -431,7 +496,7 @@ get_pseudobulk_mat <- function(pb_path, patient_annotations,
 # of cells of a single sample
 # This could also be done at the number of cells...
 
-filt_notinf_pbprofiles <- function(pb_data, pb_perc = 0.01){
+filt_notinf_pbprofiles <- function(pb_data, pb_perc = 0.01, by = "ncells"){
   
   print("Excluding profiles that represent less than pb_perc in a patient")
   
@@ -439,17 +504,77 @@ filt_notinf_pbprofiles <- function(pb_data, pb_perc = 0.01){
   
   pb_meta <- pb_data$meta
   
-  # Then rejecting all pseudobulk profiles that come from less than certain percent of population
-  pb_meta_props <- pb_meta %>%
-    group_by(patient_id) %>%
-    mutate(ncells_pat = sum(ncells)) %>%
-    mutate(propcells_pat = ncells/ncells_pat)
+  if(by == "ncells"){
+    
+    pb_meta$max_counts <- colMaxs(pb_gex)
+    pb_meta$keep <- ifelse(pb_meta$ncells < 50 &
+                             pb_meta$max_counts < 1000, 
+                             FALSE, TRUE)
+    t_ix <- which(pb_meta$keep == TRUE)
+    pb_meta <- pb_meta[t_ix, ]
+    pb_gex <- pb_gex[, t_ix]
+    
+    return(list("gex" = pb_gex, "meta" = pb_meta))
+    
+  } else{
+    
+    # Then rejecting all pseudobulk profiles that come from less than certain percent of population
+    pb_meta_props <- pb_meta %>%
+      group_by(patient_id) %>%
+      mutate(ncells_pat = sum(ncells)) %>%
+      mutate(propcells_pat = ncells/ncells_pat)
+    
+    perc_filt <- which(pb_meta_props$propcells_pat >= pb_perc)
+    pb_gex <- pb_gex[, perc_filt]
+    pb_meta <- pb_meta[perc_filt, ]
+    
+    return(list("gex" = pb_gex, "meta" = pb_meta))
+  }
   
-  perc_filt <- which(pb_meta_props$propcells_pat >= pb_perc)
-  pb_gex <- pb_gex[, perc_filt]
-  pb_meta <- pb_meta[perc_filt, ]
+}
+
+run_edgeR <- function(pb_gex, pb_meta) {
   
-  return(list("gex" = pb_gex, "meta" = pb_meta))
+  cts <- set_names(pb_meta$opt_state %>% unique)
+  
+  de_res <- map(cts, function(ct) {
+    print(ct)
+    
+    ct_meta_data <- pb_meta %>%
+      mutate(test_column = ifelse(opt_state == ct, ct, "rest"))
+    
+    dat <- DGEList(pb_gex, samples = DataFrame(ct_meta_data))
+    
+    keep <- filterByExpr(dat, group = ct_meta_data$test_column)
+    
+    dat <- dat[keep,]
+    
+    dat <- calcNormFactors(dat)
+    
+    design <- model.matrix(~factor(test_column,
+                                   levels = c("rest",ct)), dat$samples)
+    
+    colnames(design) <- c("int", ct)
+    
+    dat <- estimateDisp(dat, design)
+    
+    fit <- glmQLFit(dat, design, robust=TRUE)
+    
+    res <- glmQLFTest(fit, coef=ncol(design))
+    
+    de_res <- topTags(res, n = Inf) %>%
+      as.data.frame() %>%
+      rownames_to_column("gene")
+    
+    return(de_res)
+    
+  })
+  
+  de_res <- de_res %>% 
+    enframe() %>%
+    unnest()
+  
+  return(de_res)
   
 }
 
@@ -516,7 +641,8 @@ run_mlm <- function(pb_cpm_long, mlm_res) {
     ungroup() %>%
     arrange(state,-t_value)
 
-  write.table(degs_ext, col.names = T, row.names = F, quote = F, sep = "\t",
+  write.table(degs_ext, col.names = T, 
+              row.names = F, quote = F, sep = "\t",
               file = mlm_res)
   
   return(degs_ext)
@@ -530,18 +656,29 @@ run_gsea <- function(degs_ext, gsea_out) {
   
   gene_sets <- readRDS(file = "./markers/Genesets_Dec19.rds")[["MSIGDB_CANONICAL"]]
   
+  gls <- dplyr::select(degs_ext, 
+                       state, gene, 
+                       FDR, logFC) %>%
+    dplyr::mutate(pval = -log10(FDR)) %>%
+    mutate(pval = ifelse(is.infinite(pval), NA, pval))
+  
+  max_pval <- max(gls$pval,na.rm = T)
+  
+  gls <- gls %>%
+    dplyr::mutate(pval = ifelse(is.na(pval), max_pval, pval)) %>%
+    dplyr::mutate(rank_ord = pval * logFC)
+  
   # First GSEA
-  gsea_res <- degs_ext %>%
-    dplyr::select(-pval) %>%
+  gsea_res <- gls %>%
+    dplyr::select(-c("pval", "FDR", "logFC")) %>%
     group_by(state) %>%
     nest() %>%
     mutate(data = map(data, function(x) {
-      set_names(x$t_value, x$gene) %>%
+      set_names(x$rank_ord, x$gene) %>%
         na.omit()
     })) %>%
-    rename("gls" = data) %>%
-    mutate(gsea_stats = map(gls, function(t_vals) {
-      
+    rename("gls_rank" = data) %>%
+    mutate(gsea_stats = map(gls_rank, function(t_vals) {
       fgsea(pathways = gene_sets,stats = t_vals)
     }))
   
@@ -563,9 +700,23 @@ run_gsea <- function(degs_ext, gsea_out) {
 run_progeny_t <- function(degs_ext, progeny_out) {
   print("running progeny")
   
-  progeny_res <- degs_ext %>% dplyr::select(-pval) %>%
+  gls <- dplyr::select(degs_ext, 
+                       state, gene, 
+                       FDR, logFC) %>%
+    dplyr::mutate(pval = -log10(FDR)) %>%
+    mutate(pval = ifelse(is.infinite(pval), NA, pval))
+  
+  max_pval <- max(gls$pval,na.rm = T)
+  
+  gls <- gls %>%
+    dplyr::mutate(pval = ifelse(is.na(pval), max_pval, pval)) %>%
+    dplyr::mutate(rank_ord = pval * logFC)
+  
+  progeny_res <- gls %>% 
+    dplyr::select(-c("pval", "FDR", "logFC")) %>%
     pivot_wider(names_from = state,
-                values_from = t_value) %>%
+                values_from = rank_ord,
+                values_fill = 0) %>%
     column_to_rownames("gene") %>%
     as.matrix() %>%
     progeny(.,scale = T,top = 500)
@@ -581,22 +732,24 @@ run_progeny_t <- function(degs_ext, progeny_out) {
   return(progeny_res)
 }
 
-run_dorothea_t <- function(degs_ext, tf_out) {
+run_dorothea_t <- function(degs_ext, tf_out, reg_net) {
   print("running tf act inference")
   
   min_targets <- 5
   
-  data(dorothea_hs, package = "dorothea")
+  regulons <- read_table2(reg_net)
   
-  regulons <- dorothea_hs %>% 
-    dplyr::filter(confidence != "E")
+  #data(dorothea_hs, package = "dorothea")
+  
+  #regulons <- dorothea_hs %>% 
+  #  dplyr::filter(confidence != "E")
   
   regulons <- regulons %>% 
     dplyr::filter(target %in% (degs_ext$gene %>% unique()))
   
   filtered_regulons <- regulons %>% 
-    dplyr::select(tf, target) %>%
-    group_by(tf) %>%
+    dplyr::select(source, target) %>%
+    group_by(source) %>%
     nest() %>%
     mutate(data = map(data, ~ .x[[1]])) %>%
     mutate(n_targets = map_dbl(data, length)) %>%
@@ -606,18 +759,33 @@ run_dorothea_t <- function(degs_ext, tf_out) {
     names()
   
   regulons <- regulons %>%
-    dplyr::filter(tf %in% filtered_regulons)  %>%
-    dplyr::mutate(likelihood = mor)
+    dplyr::filter(source %in% filtered_regulons)
   
-  t_mat <- degs_ext %>% dplyr::select(-pval) %>%
+  # Generate matrix of t-values
+  
+  gls <- dplyr::select(degs_ext, 
+                       state, gene, 
+                       FDR, logFC) %>%
+    dplyr::mutate(pval = -log10(FDR)) %>%
+    mutate(pval = ifelse(is.infinite(pval), NA, pval))
+  
+  max_pval <- max(gls$pval,na.rm = T)
+  
+  gls <- gls %>%
+    dplyr::mutate(pval = ifelse(is.na(pval), max_pval, pval)) %>%
+    dplyr::mutate(rank_ord = pval * logFC)
+  
+  t_mat <-  gls %>% 
+    dplyr::select(-c("pval", "FDR", "logFC")) %>%
     pivot_wider(names_from = state,
-                values_from = t_value) %>%
+                values_from = rank_ord,
+                values_fill = 0) %>%
     column_to_rownames("gene") %>%
     as.matrix()
   
   dorothea_res <- decoupleR::run_wmean(mat = t_mat, 
                        network = regulons,
-                       .source = "tf",
+                       .source = "source",
                        .target = "target",
                        .mor = "mor",
                        .likelihood = "likelihood",
