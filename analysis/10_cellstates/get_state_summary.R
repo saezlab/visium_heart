@@ -162,7 +162,7 @@ summarize_state <- function(ct_folder, ct_alias, exception,
     dplyr::rename("state" = name)
   
   degs_ext %>%
-    dplyr::filter(logFC > 0) %>% 
+    dplyr::arrange(FDR) %>% 
   write.table(., col.names = T, 
               row.names = F, quote = F, sep = "\t",
               file = mlm_res)
