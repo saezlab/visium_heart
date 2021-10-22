@@ -28,11 +28,10 @@ walk(visium_df$visium_file, function(visium_file) {
   print(visium_file)
   
   visium_slide <- readRDS(visium_file) %>%
-    getTF_matrix_MS(visium_slide = .,
-                    MS_regulon = gsets,
+    get_wmean_score(visium_slide = .,
+                    network = gsets,
                     assay = "SCT",
                     module_name = "cell_states")
   
   saveRDS(visium_slide, file = visium_file)
 })
-

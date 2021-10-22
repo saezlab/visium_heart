@@ -12,7 +12,6 @@ library(tidyverse)
 visium_folder = "./processed_visium/objects/"
 visium_files <- list.files(visium_folder, full.names = F)
 visium_samples <- gsub("[.]rds", "", visium_files)
-
 visium_df <- tibble(visium_file = paste0(visium_folder, 
                                          visium_files),
                     sample = visium_samples)
@@ -22,7 +21,7 @@ visium_df <- tibble(visium_file = paste0(visium_folder,
 c2l_assay <- "c2l_props"
 
 # Eveything except cardiomyocytes and fibroblast must represent 10% of celltype score
-ct_prop_param <- tibble(cts = c("cardiomyocyte", "fibroblast", "endothelial")) %>%
+ct_prop_param <- tibble(cts = c("CM", "Fib", "Endo", "Myeloid", "Mast")) %>%
   mutate(prop_param = 0.125)
 
 add_ct_flags <- function(slide, ct_prop_param, cell_props) {

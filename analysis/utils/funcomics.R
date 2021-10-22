@@ -14,6 +14,7 @@ library(Seurat)
 library(dorothea)
 library(viper)
 library(progeny)
+library(decoupleR)
 
 
 #' @param visium_slide: Seurat object with SCT assay
@@ -173,6 +174,38 @@ add_funcomics <- function(visium_slide,
                                     assay = assay,
                                     module_name = module_name)
   }
+  
+  return(visium_slide)
+}
+
+# Get module scores function -----------------------------------------------------------------------------------
+#' Generates a module score matrix
+#' 
+#' @param visium_slide: Seurat object
+#' @param MS_regulon: list of gene sets
+#' @return a visium object
+get_wmean_score <- function(visium_slide, 
+                            network,
+                            assay = "RNA",
+                            module_name = "user_gsets") {
+
+  
+  gset_mat <- run_wmean(network = network,
+                        mat = GetAssayData(visium_slide, assay = assay),
+                        .source = "source",
+                        .target = "target",
+                        .mor = "mor",
+                        .likelihood = "likelihood",
+                        times = 100)
+
+  gset_mat <- gset_mat %>% 
+    dplyr::filter(statistic == "norm_wmean") %>%
+    dplyr::select(-c("statistic","p_value")) %>%
+    pivot_wider(names_from = condition, values_from = score) %>%
+    column_to_rownames("source") %>%
+    as.matrix()
+  
+  visium_slide[[module_name]] <- CreateAssayObject(data = gset_mat)
   
   return(visium_slide)
 }
