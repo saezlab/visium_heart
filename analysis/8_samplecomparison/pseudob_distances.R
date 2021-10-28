@@ -10,36 +10,47 @@ library(philentropy)
 library(cowplot)
 source("./analysis/utils/pseudobulk_utils.R")
 
-pseudobulk_data <- readRDS("./visium_results_manuscript/integration/ps_patients_ct.rds")[[1]][["gex"]]
-atlas_meta <- readRDS("./visium_results_manuscript/integration/ps_patients_ct.rds")[[1]][["annotations"]]
+sample_dict <- readRDS("./markers/snrna_patient_anns_revisions.rds")
+pseudobulk_data <- readRDS("./processed_snrnaseq/integration/psxsmpl_integrated_rnasamples_ann.rds")[[1]][["gex"]]
+
+pb_meta <- colData(pseudobulk_data) %>% 
+  as.data.frame() %>% 
+  left_join(sample_dict, 
+            by = c("orig.ident" = "sample_id"))
+
+patient_cells <- pb_meta %>%
+  group_by(patient_id, cell_type) %>%
+  summarize(ncells = sum(ncells))
+
+# This summarizes the info into patients
+pseudobulk_data <- sumCountsAcrossCells(assay(pseudobulk_data), 
+                                DataFrame(pb_meta[, c("patient_id", "cell_type")]))
+
+atlas_meta <- readRDS("./processed_snrnaseq/integration/psxsmpl_integrated_rnasamples_ann.rds")[[1]][["annotations"]] %>%
+  left_join(sample_dict,
+            by = c("orig.ident" = "sample_id"))
 
 # Get sample information ----------------------------------------------------------------------
 
-# ID names
-sample_dict <- read.table("./markers/NEW_PatIDs_visium_overview_allsamples.tsv",
-                                   sep = "\t", header = T) %>%
-  mutate_all(as.character) %>%
-  dplyr::select(snRNA, New.Ids) %>%
-  dplyr::rename(orig.ident = snRNA,
-                patient_sample = New.Ids) %>%
-  dplyr::mutate(patient = map_chr(strsplit(patient_sample, "_"), 
-                                  ~.x[[1]]),
-                area = map_chr(strsplit(patient_sample, "_"), 
-                               ~.x[[2]]))
-
 # Cell-type composition
 cell_props <- atlas_meta %>%
-  group_by(orig.ident, cell_type) %>%
+  group_by(patient_id, cell_type) %>%
   summarize(ncells = length(cell_type)) %>%
   dplyr::mutate(all_sample_cells = sum(ncells)) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(cell_prop = ncells/all_sample_cells) %>%
-  dplyr::select(orig.ident, cell_type, cell_prop)
-
+  dplyr::select(patient_id, cell_type, cell_prop)
 
 # Get matrices per cell_type ----------------------------------------------------------------------
 col_meta <- colData(pseudobulk_data) %>%
-  as.data.frame()
+  as.data.frame() %>% 
+  dplyr::select(-ncells) %>%
+  left_join(patient_cells, by = c("patient_id","cell_type")) %>%
+  left_join(cell_props, by = c("patient_id", "cell_type"))
+
+high_perc_cells <- which(col_meta$ncells > 50)
+col_meta <- col_meta[high_perc_cells, ]
+pseudobulk_data <- pseudobulk_data[, high_perc_cells]
 
 cts <- set_names(unique(col_meta %>% pull(cell_type)))
 
@@ -49,12 +60,18 @@ cell_type_divergences <- map(cts, function(ct) {
   ct_ix <- which(col_meta %>% pull(cell_type) == ct)
   
   ct_dat <- assay(pseudobulk_data)[, ct_ix]
-  colnames(ct_dat) <- (col_meta %>% pull(orig.ident))[ct_ix]
+  colnames(ct_dat) <- (col_meta %>% pull(patient_id))[ct_ix]
   
-  ct_dat <- edgeR_filtering(ct_dat, min.count = 0.2)
+  ct_dat <- edgeR_filtering(ct_dat, 
+                  min.count = 10,
+                  min.prop = 0.85,
+                  min.total.count = 10)
   
 }) %>% 
-  enframe(name = "cell_type", value = "count_matrix")
+  enframe(name = "cell_type", value = "count_matrix") %>%
+  dplyr::filter(! cell_type %in% c("Mast", "Adipo"))
+
+saveRDS(cell_type_divergences, "./processed_snrnaseq/integration/psxpat_integrated_rnasamples_filt.rds")
 
 # Calculate JSD distances from counts -----------------------------------
 
@@ -91,11 +108,11 @@ cell_type_divergences <- cell_type_divergences %>%
 
 # Weight divergences by proportions
 cell_type_divergences <- left_join(cell_type_divergences, cell_props,
-                                   by = c("SampleA" = "orig.ident",
+                                   by = c("SampleA" = "patient_id",
                                           "cell_type")) %>%
   dplyr::rename(cell_prop_A = cell_prop) %>%
   left_join(cell_props,
-            by = c("SampleB" = "orig.ident",
+            by = c("SampleB" = "patient_id",
                    "cell_type")) %>%
   dplyr::rename(cell_prop_B = cell_prop) %>%
   dplyr::mutate(min_prop = ifelse(cell_prop_A <= cell_prop_B, 
@@ -117,20 +134,19 @@ get_JSD_mds <- function(divergences) {
   
   mds_fit <- as.data.frame(cmdscale(as.dist(sample_divergences), 
                                     eig=TRUE, k=2)$points) %>%
-    rownames_to_column("orig.ident") %>% 
-    left_join(sample_dict)
+    rownames_to_column("patient_id") %>% 
+    left_join(unique(sample_dict[,c("patient_id", "patient_group")]))
   
   return(mds_fit)
 }
 
 # MDS of complete profile -----------------------------------------
-
 mds_samples_all <- get_JSD_mds(sample_divergences)
 
 all_jsd_plt <- ggplot(mds_samples_all, aes(x = V1,
                                            y = V2,
-                                           color = area,
-                                           label = patient)) + 
+                                           color = patient_group,
+                                           label = patient_id)) + 
   geom_point(size = 2) +
   ggrepel::geom_text_repel() +
   theme_classic() +
@@ -149,26 +165,23 @@ cell_type_divergences <- cell_type_divergences %>%
   dplyr::mutate(mds_plts = map2(cell_type_mds, cell_type, function(x, y) {
     ggplot(x, aes(x = V1, 
                   y = V2, 
-                  color = area,
-                  label = patient)) + 
+                  color = patient_group,
+                  label = patient_id)) + 
       geom_point(size = 1) +
       ggrepel::geom_text_repel() +
       theme_classic() +
+      theme(axis.text = element_text(size = 11)) +
       ggtitle(paste0("JSD ", y))
   }))
 
 # generate panel
 
-JSD_plts = cowplot::plot_grid(all_jsd_plt, cell_type_divergences$mds_plts[[1]], cell_type_divergences$mds_plts[[2]],
-                     cell_type_divergences$mds_plts[[3]], cell_type_divergences$mds_plts[[4]], cell_type_divergences$mds_plts[[5]],
-                     cell_type_divergences$mds_plts[[6]], cell_type_divergences$mds_plts[[7]], cell_type_divergences$mds_plts[[8]],
-                     cell_type_divergences$mds_plts[[9]],
+JSD_plts = cowplot::plot_grid(plotlist = c(all_jsd_plt,cell_type_divergences$mds_plts),
                      nrow = 3, ncol = 4, align = "hv")
 
-pdf(file = "visium_results_manuscript/sample_comparison/JSD_distances.pdf", width = 17, height = 11)
-
-plot(JSD_plts)
-
+pdf(file = "results/sample_comparison/JSD_distances.pdf", width = 7, height = 5)
+plot(all_jsd_plt)
+walk(cell_type_divergences$mds_plts, plot)
 dev.off()
 
 

@@ -72,7 +72,7 @@ mi_props_mean %>%
   theme_classic() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
         legend.position = "bottom") +
-  scale_fill_gradient(high = "#ffd89b", low = "#19547b", limits = c(0,1)) 
+  scale_fill_gradient(low = "#ffd89b", high = "#19547b", limits = c(0,1)) 
 
 
 dev.off()
@@ -134,24 +134,9 @@ multiview_props <- mi_props %>%
   summarise(multiview_mean_prop = mean(value)) %>%
   left_join(pat_anns)
 
-pdf(file = "./results/sample_comparison/compositions/momics_cellcomps.pdf", height = 4, width = 5)
-
-multiview_compositions_plt <- ggplot(multiview_props, aes(x = patient_group, y = multiview_mean_prop, color = patient_group)) +
-  geom_boxplot() +
-  facet_wrap(.~cell_type, ncol = 4, scales = "free_y") +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-        legend.position = "none") +
-  ylab("multiomics estimated compositions") +
-  xlab("")
-
-plot(multiview_compositions_plt)
-
-dev.off()
-
 # Statistical tests:
 
-multiview_props %>% 
+kwallis_comps <- multiview_props %>% 
   ungroup() %>%
   group_by(cell_type) %>%
   nest() %>%
@@ -164,11 +149,33 @@ multiview_props %>%
   select(wres) %>%
   unnest() %>%
   ungroup() %>%
-  mutate(corr_p = p.adjust(p.value)) %>%
-  write.table(., file = "./results/sample_comparison/compositions/kruskall_wallis_momics.txt", 
+  mutate(corr_p = p.adjust(p.value))
+
+
+write.table(kwallis_comps,
+              file = "./results/sample_comparison/compositions/kruskall_wallis_momics.txt", 
               col.names = T, row.names = F, quote = F, sep = "\t")
 
 
+winners <- kwallis_comps %>%
+  dplyr::filter(corr_p <= 0.1) %>%
+  pull(cell_type)
 
+pdf(file = "./results/sample_comparison/compositions/momics_cellcomps.pdf", height = 3, width = 5)
+
+multiview_compositions_plt <- multiview_props %>%
+  dplyr::filter(cell_type %in% winners) %>%
+  ggplot(., aes(x = patient_group, y = multiview_mean_prop, color = patient_group)) +
+  geom_boxplot() +
+  facet_wrap(.~cell_type, ncol = 4, scales = "free_y") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = "none") +
+  ylab("multiomics estimated\n compositions") +
+  xlab("")
+
+plot(multiview_compositions_plt)
+
+dev.off()
 
 

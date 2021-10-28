@@ -8,7 +8,6 @@
 #' 4) Show the cell-type specific responses per niche
 
 library(compositions)
-#library(Seurat)
 library(tidyverse)
 library(clustree)
 library(uwot)
@@ -19,9 +18,6 @@ library(cluster)
 
 c2l_folder <- "./results/deconvolution_models/location_models/density_tables_rds/"
 assay_name <- "c2l"
-
-# Define resolution - You have to do this manually -----------------------------------------------
-niche_resolution <- "ILR_snn_res.0.4"
 
 # Get atlas meta:
 atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides.rds")[[1]][["annotations"]] %>%
@@ -67,7 +63,7 @@ cell_ilr <- as.matrix(ilr(integrated_compositions, baseILR))
 colnames(cell_ilr) <- paste0("ILR_", 1:ncol(cell_ilr))
 
 # Make community graph
-k_vect <- c(10, 15, 20, 25, 30, 50)
+k_vect <- c(10, 25, 50)
 k_vect <- set_names(k_vect, paste0("k_",k_vect))
 
 cluster_info <- map(k_vect, function(k) {
@@ -144,8 +140,11 @@ comp_umap <- comp_umap %>%
             by = c("row_id" = "spot_id"))
 
 saveRDS(comp_umap, file = "./results/niche_mapping/ct_niches/umap_compositional.rds")
+write_csv(comp_umap, file = "./results/niche_mapping/ct_niches/umap_compositional.csv")
 
 pdf("./results/niche_mapping/ct_niches/ct_ILR_umap.pdf", height = 6, width = 7)
+
+log_comps <- log10(integrated_compositions)
 
 plt <- comp_umap %>%
   ggplot(aes(x = V1, y = V2, 
@@ -163,7 +162,7 @@ cts <- set_names(colnames(integrated_compositions))
 walk(cts, function(ct){
   
   plot_df <- comp_umap %>%
-    mutate(ct_prop = integrated_compositions[ , ct])
+    mutate(ct_prop = log_comps[ , ct])
   
   plt <- plot_df %>%
     ggplot(aes(x = V1, y = V2, 
@@ -172,8 +171,7 @@ walk(cts, function(ct){
     theme_classic() +
     ggtitle(ct) +
     xlab("UMAP1") +
-    ylab("UMAP2") +
-    scale_colour_gradient(low = "#ffd89b", high = "#19547b", limits = c(0,1))
+    ylab("UMAP2")
   
   plot(plt)
   
@@ -181,43 +179,37 @@ walk(cts, function(ct){
 
 dev.off()
 
+# Make the niche annotation meta-data
 
 cluster_info <- comp_umap %>%
-  dplyr::select(-c("V1", "V2"))
+  dplyr::select(c("row_id","k_50")) %>%
+  dplyr::rename("niche" = k_50) %>%
+  dplyr::mutate(ct_niche = paste0("niche_", niche))
+
+saveRDS(cluster_info, "./results/niche_mapping/ct_niches/niche_annotation_ct.rds")
 
 # What are the cells that define the niches?
 
-integrated_compositions <- integrated_compositions %>%
+niche_summary_pat <- integrated_compositions %>%
   as.data.frame() %>%
   rownames_to_column("row_id") %>%
-  pivot_longer(-row_id,values_to = "ct_prop", names_to = "cell_type")
-
-integrated_compositions <- integrated_compositions %>%
-  left_join(cluster_info)
-
-sample_names <- base::strsplit(integrated_compositions[["row_id"]], "[..]")
-
-integrated_compositions <- integrated_compositions %>%
+  pivot_longer(-row_id,values_to = "ct_prop", 
+               names_to = "cell_type") %>%
+  left_join(cluster_info) %>%
   mutate(orig.ident = strsplit(row_id, "[..]") %>%
-           map_chr(., ~ .x[1]))
-
-# Select a niche resolution
-niche_summary_pat <- integrated_compositions %>%
-  dplyr::select_at(c("row_id", "cell_type", "ct_prop", "orig.ident", niche_resolution)) %>%
-  dplyr::rename("ct_niche" = niche_resolution) %>%
-  mutate(ct_niche = paste0("niche_", ct_niche)) %>%
+           map_chr(., ~ .x[1])) %>%
   group_by(orig.ident, ct_niche, cell_type) %>%
-  summarize(mean_ct_prop = mean(ct_prop))
+  summarize(median_ct_prop = median(ct_prop))
   
 niche_summary <- niche_summary_pat %>%
   ungroup() %>%
   group_by(ct_niche, cell_type) %>%
-  summarise(patient_mean_ct_prop = mean(mean_ct_prop))
+  summarise(patient_median_ct_prop = median(median_ct_prop))
 
 # Data manipulation to have clustered data
 
 niche_summary_mat <- niche_summary %>%
-  pivot_wider(values_from = patient_mean_ct_prop, 
+  pivot_wider(values_from = patient_median_ct_prop, 
               names_from =  cell_type, values_fill = 0) %>%
   column_to_rownames("ct_niche") %>%
   as.matrix()
@@ -231,7 +223,7 @@ ct_order <- ct_order$labels[ct_order$order]
 # Find characteristic cell types of each niche
 # We have per patient the proportion of each cell-type in each niche
 
-run_wilcox_all <- function(prop_data) {
+run_wilcox_up <- function(prop_data) {
   
   prop_data_group <- prop_data[["ct_niche"]] %>%
     unique() %>%
@@ -241,11 +233,13 @@ run_wilcox_all <- function(prop_data) {
     
     test_data <- prop_data %>%
       mutate(test_group = ifelse(ct_niche == g,
-                                 "target", "rest"))
+                                 "target", "rest")) %>%
+      mutate(test_group = factor(test_group,
+                                 levels = c("target", "rest")))
     
-    wilcox.test(mean_ct_prop ~ test_group, 
+    wilcox.test(median_ct_prop ~ test_group, 
                 data = test_data,
-                alternative = "two.sided") %>%
+                alternative = "greater") %>%
       broom::tidy()
   }) %>% enframe("ct_niche") %>%
     unnest()
@@ -256,7 +250,7 @@ wilcoxon_res <- niche_summary_pat %>%
   ungroup() %>%
   group_by(cell_type) %>%
   nest() %>%
-  mutate(wres = map(data, run_wilcox_all)) %>%
+  mutate(wres = map(data, run_wilcox_up)) %>%
   dplyr::select(wres) %>%
   unnest() %>%
   ungroup() %>%
@@ -265,27 +259,38 @@ wilcoxon_res <- niche_summary_pat %>%
 wilcoxon_res <- wilcoxon_res %>%
   mutate(significant = ifelse(p_corr <= 0.15, "*", ""))
 
+write.table(niche_summary_pat, file = "./results/niche_mapping/ct_niches/niche_summary_pat.txt", 
+            col.names = T, row.names = F, quote = F, sep = "\t")
+
+write.table(wilcoxon_res, file = "./results/niche_mapping/ct_niches/wilcoxon_res_cells_niches.txt", 
+            col.names = T, row.names = F, quote = F, sep = "\t")
+
 mean_ct_prop_plt <- niche_summary %>%
   left_join(wilcoxon_res, by = c("ct_niche", "cell_type")) %>%
   mutate(cell_type = factor(cell_type, levels = ct_order),
          ct_niche = factor(ct_niche, levels = niche_order)) %>%
-  ggplot(aes(x = cell_type, y = ct_niche, fill = patient_mean_ct_prop)) +
+  ungroup() %>%
+  group_by(cell_type) %>%
+  mutate(scaled_pat_median = (patient_median_ct_prop - mean(patient_median_ct_prop))/sd(patient_median_ct_prop)) %>%
+  ungroup() %>%
+  ggplot(aes(x = cell_type, y = ct_niche, fill = scaled_pat_median)) +
   geom_tile() +
   geom_text(aes(label = significant)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12),
         legend.position = "bottom",
         plot.margin = unit(c(0, 0, 0, 0), "cm"),
         axis.text.y = element_text(size=12)) +
-  scale_fill_gradient(high = "#ffd89b", low = "#19547b", limits = c(0,1)) 
+  scale_fill_gradient(high = "#ffd89b", low = "#19547b")
+  
 
 # Finally describe the proportions of those niches in all the data
 cluster_counts <- cluster_info %>%
-  dplyr::select_at(c("row_id", niche_resolution)) %>%
-  dplyr::rename("ct_niche" = niche_resolution) %>%
-  mutate(ct_niche = paste0("niche_", ct_niche)) %>%
+  dplyr::select_at(c("row_id", "ct_niche")) %>%
   group_by(ct_niche) %>%
   summarise(nspots = length(ct_niche)) %>%
   mutate(prop_spots = nspots/sum(nspots))
+
+write_csv(cluster_counts, file = "./results/niche_mapping/ct_niches/niche_prop_summary.csv")
 
 barplts <- cluster_counts %>%
   mutate(ct_niche = factor(ct_niche, levels = niche_order)) %>%
@@ -294,14 +299,23 @@ barplts <- cluster_counts %>%
   theme_classic() + ylab("") +
   theme(axis.text.y = element_blank(),
         plot.margin = unit(c(0, 0, 0, 0), "cm"),
-        axis.text.x = element_text(size=12))
+        axis.text.x = element_text(size=12)) 
 
 niche_summary_plt <- cowplot::plot_grid(mean_ct_prop_plt, barplts, align = "hv", axis = "tb")
 
-pdf("./results/niche_mapping/ct_niches/characteristic_ct_niches.pdf", height = 6, width = 6)
+pdf("./results/niche_mapping/ct_niches/characteristic_ct_niches.pdf", height = 3, width = 6)
 
 plot(niche_summary_plt)
 
 dev.off()
 
 saveRDS(cluster_info, "./results/niche_mapping/ct_niches/niche_annotation_ct.rds")
+
+# Show the compositions of cells of each niche 
+pdf(file = "./results/niche_mapping/ct_niches/niche_summary_pat.pdf", height = 5, width = 8)
+niche_summary_pat %>%
+  ggplot(aes(x = ct_niche, y  = median_ct_prop)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(.~cell_type, ncol = 3,scales = "free_y")
+dev.off()
