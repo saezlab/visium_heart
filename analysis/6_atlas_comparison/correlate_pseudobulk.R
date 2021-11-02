@@ -2,6 +2,10 @@
 # roramirezf@uni-heidelberg.de
 
 #' Correlation of pseudobulk profiles between atlases
+#' We create long versions of cpm and raw counts and 
+#' calculate correlations of cpms or distances with JSD
+#' 
+#' We limit the gene universe to the top 200 markers of the HCA
 
 library(scater)
 library(tidyverse)
@@ -12,232 +16,159 @@ library(ComplexHeatmap)
 
 source("./analysis/utils/pseudobulk_utils.R")
 
-# Dictionary between atlases
+# This is the ct naming convention dictionary -------------------------------------------
 ct_dictionary <- read.table("./markers/hca_mi_ctannotations.txt", sep = "\t", header = T)
 
-# Aesthetics definitions
+# Here we get the markers from the HCA --------------------------------------------------
+nmarkers <- 200
 
-cor_fun = circlize::colorRamp2(c(-1, 0, 1), 
-                               c("darkred", "white", "darkblue"))
+hca_mrks <- read_csv("ext_data/hca_mrkrs.csv") %>%
+  dplyr::filter(pvals_adj < 0.01) %>%
+  arrange(group, -logfoldchanges) %>%
+  dplyr::select(group, names) %>%
+  group_by(group) %>%
+  dplyr::slice(1:nmarkers) %>%
+  nest() %>%
+  mutate(data = map(data, ~.x[[1]])) %>%
+  deframe()
 
-dist_fun = circlize::colorRamp2(c(0, 1), 
-                               c("darkblue", "white"))
+hca_mrks <- unlist(hca_mrks) %>% unique()
+mi_mrks <- readRDS("./markers/pb_ct_marker_list.rds")
+hca_mrks <- c(hca_mrks, unlist(mi_mrks)) %>% unique()
 
+# We get our MI pb profile -------------------------------------------------------------------------
+# This is pseudobulk profile per cell-type regardless of patient composition ------------------------
+mi_atlas <- readRDS("./processed_snrnaseq/integration/ps_integrated_rnasamples_ann.rds")[[1]]
+mi_atlas_mat <- mi_atlas$gex
+colnames_mat <- colData(mi_atlas$gex)[,1]
+mi_atlas_mat <- assay(mi_atlas_mat)
+colnames(mi_atlas_mat) <- colnames_mat
 
-#' Compare expression profiles of the same matrix
-#' @param expression_mat: a expression matrix with genes in rows and samples in colums
-#' @param jsd: do you want to use jensen shannon divergences distances?
-#' @return a distance matrix
-self_compare <- function(expression_mat, jsd = T) {
-  
-  if(jsd) {
-    compare_profiles(expression_mat,
-                     expression_mat)
-    
-  } else {
-    
-    compare_profiles(expression_mat,
-                     expression_mat,
-                     jsd = F)
-    
-  }
-  
-}
+# We take genes with 0 everywhere ----------------------------------------------------------
+mi_atlas_mat <- edgeR_filtering(mi_atlas_mat,
+                                min.total.count = 100, 
+                                min.count = 10, 
+                                min.prop = 0.1)
 
-#' Filter matrix by gene
-#' @param expression_mat: a expression matrix with genes in rows and samples in colums
-#' @param gene_list: do you want to use jensen shannon divergences distances?
-#' @return a reduced matrix containing only genes of interest
-filter_genes <- function(expression_mat, gene_list) {
-  
-  gene_list <- gene_list[gene_list %in% rownames(expression_mat)]
-  
-  if(length(gene_list) > 0) {
-    
-    return(expression_mat[gene_list,])
-    
-  } else{
-    
-    NULL
-    
-  }
-}
+# We calculate cpms -----------------------------------------------------------------------
+mi_atlas_mat_cpm <- cpm_norm(mi_atlas_mat)
+mi_atlas_mat_cpm_long <- mi_atlas_mat_cpm %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cell_type", values_to = "expr") %>%
+  mutate(atlas = "MI")
 
-# Defining a set of genes that's useful for comparison
+# Let's repeat for HCA
+hca_atlas <- readRDS("./ext_data/hca_pseudobulk.rds")[["nuclei"]]
+hca_atlas <- assay(hca_atlas$cell_type)
 
-cell_type_mrkrs <- (read.table("./markers/Kuppe_def.txt",
-                                                 sep = "\t",stringsAsFactors = F,
-                                                 header = T))[,c(1,2)]
+# We take genes with 0 everywhere ----------------------------------------------------------
+hca_atlas <- edgeR_filtering(hca_atlas,
+                                min.total.count = 100, 
+                                min.count = 10, 
+                                min.prop = 0.1)
 
-cell_type_mrkrs[,1] <- toupper(cell_type_mrkrs[,1])
-colnames(cell_type_mrkrs) <- c("gene","cell_type")
+# We calculate cpms -----------------------------------------------------------------------
+hca_atlas_cpm <- cpm_norm(hca_atlas)
 
-# Our atlas, we could expect different grouping vars:
-mi_atlas <- readRDS("./visium_results_manuscript/integration/ps_integrated_data_fordeconv.rds")[[1]]
-mi_atlas_mats <- mi_atlas[names(mi_atlas) != "annotations"]
-mi_atlas_mats <- map(mi_atlas_mats, assay)  %>%
-  enframe("ann_level") %>%
-  dplyr::mutate(origin = "nuclei",
-                atlas = "mi") %>%
-  dplyr::mutate(filt_mats = map(value, edgeR_filtering, min.count = 5)) %>%
-  dplyr::mutate(norm_mats = map(filt_mats, cpm_norm)) %>%
-  dplyr::mutate(filt_mats = map(filt_mats, filter_genes, gene_list = cell_type_mrkrs$gene %>% unique())) %>%
-  dplyr::mutate(norm_mats = map(norm_mats, filter_genes, gene_list = cell_type_mrkrs$gene %>% unique())) %>%
-  dplyr::mutate(self_jsd = map(filt_mats, self_compare),
-                self_cor = map(norm_mats, self_compare, jsd =F))
-
-pdf("./visium_results_manuscript/hca/MI_self_reduced_jsd.pdf")
-
-walk(mi_atlas_mats$self_jsd, function(x) {
-  
-  draw(Heatmap(x, col = dist_fun))
-  
-} )
-
-dev.off()
-
-pdf("./visium_results_manuscript/hca/MI_self__reduced_cor.pdf")
-
-walk(mi_atlas_mats$self_cor, function(x) {
-  
-  draw(Heatmap(x, col = cor_fun))
-  
-} )
-
-dev.off()
-
-# HC atlas, we could expect different grouping vars:
-hca_atlas <- readRDS("./visium_results_manuscript/integration/hca_pseudobulk.rds")
-hca_atlas_mats <- map(hca_atlas, function(x) {
-  
-  atlas_mats <- x[names(x) != "annotations"]
-  atlas_mats <- map(atlas_mats, assay)  %>%
-    enframe("ann_level")
-
-}) %>%
-  enframe("origin") %>%
-  unnest() %>%
-  mutate(atlas = "hca") %>%
-  dplyr::mutate(filt_mats = map(value, edgeR_filtering, min.count = 5)) %>%
-  dplyr::mutate(norm_mats = map(filt_mats, cpm_norm)) %>%
-  dplyr::mutate(filt_mats = map(filt_mats, filter_genes, gene_list = cell_type_mrkrs$gene %>% unique())) %>%
-  dplyr::mutate(norm_mats = map(norm_mats, filter_genes, gene_list = cell_type_mrkrs$gene %>% unique())) %>%
-  dplyr::mutate(self_jsd = map(filt_mats, self_compare),
-                self_cor = map(norm_mats, self_compare, jsd =F))
-
-# Self reports
-pdf("./visium_results_manuscript/hca/hca_self_jsd.pdf", width = 12, height = 12)
-
-walk(hca_atlas_mats$self_jsd, function(x) {
-  
-  draw(Heatmap(x, col = dist_fun))
-  
-} )
-
-dev.off()
-
-pdf("./visium_results_manuscript/hca/hca_self_cor.pdf", width = 12, height = 12)
-
-walk(hca_atlas_mats$self_cor, function(x) {
-  
-  draw(Heatmap(x, col = cor_fun))
-  
-} )
-
-dev.off()
-
-# Compare everything versus everything
-
-hca_atlas_mats <- hca_atlas_mats %>%
-  dplyr::mutate(dist_mats_cell_type = map(value, 
-                                compare_profiles, 
-                                matB = mi_atlas_mats$value[[1]]),
-                cor_mats_cell_type = map(norm_mats, 
-                                          compare_profiles, 
-                                          matB = mi_atlas_mats$norm_mats[[1]],
-                                         jsd = F),
-                dist_mats_cell_state = map(value, 
-                                          compare_profiles, 
-                                          matB = mi_atlas_mats$value[[2]]),
-                cor_mats_cell_state = map(norm_mats, 
-                                         compare_profiles, 
-                                         matB = mi_atlas_mats$norm_mats[[2]],
-                                         jsd = F))
-
-# Paper comparisons
-
-cell_type_nuclei_cor <- hca_atlas_mats %>% dplyr::filter(origin == "nuclei",
-                                                         ann_level == "cell_type") %>%
-  pull(cor_mats_cell_type)
-
-cell_state_nuclei_cor <- hca_atlas_mats %>% dplyr::filter(origin == "nuclei",
-                                                          ann_level == "cell_state") %>%
-  pull(cor_mats_cell_state)
-
-# Clean the matrices
-cell_type_nuclei_cor[[1]] %>% 
-  as.data.frame() %>% 
-  rownames_to_column("HCA") %>%
-  pivot_longer(-HCA, names_to = "MI") %>%
-  mutate(HCA = gsub("[A-Z]_","",HCA),
-         MI = gsub("[A-Z]_","", MI)) %>%
-  left_join(ct_dictionary, by = c("HCA" = "HCA_ann")) %>%
+hca_atlas_cpm_long <- hca_atlas_cpm %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cell_type", values_to = "expr") %>%
+  mutate(atlas = "HCA") %>%
+  left_join(ct_dictionary, by = c("cell_type" = "HCA_ann")) %>%
   na.omit() %>%
-  mutate(HCA = MI_ann) %>%
-  ggplot(aes(x = HCA, 
-             y = MI,
-             fill = value)) +
+  dplyr::select(-cell_type) %>%
+  dplyr::rename("cell_type" = MI_ann)
+
+# Merge all data
+
+all_gex <- left_join(mi_atlas_mat_cpm_long, hca_atlas_cpm_long, by = c("cell_type", "gene")) %>%
+  na.omit()
+
+correlations_all <- all_gex %>%
+  group_by(cell_type) %>%
+  nest() %>%
+  mutate(cor.res = map(data, function(d) {
+    
+    cor.test(d$expr.x, d$expr.y, method = "spearman") %>%
+      broom::tidy()
+    
+  })) %>%
+  select(cor.res) %>%
+  unnest()
+
+correlations_filtered <- all_gex %>%
+  dplyr::filter(gene %in% hca_mrks) %>%
+  group_by(cell_type) %>%
+  nest() %>%
+  mutate(cor.res = map(data, function(d) {
+    
+    cor.test(d$expr.x, d$expr.y, method = "spearman") %>%
+      broom::tidy()
+    
+  })) %>%
+  select(cor.res) %>%
+  unnest()
+
+genes_all <- all_gex %>%
+  pull(gene) %>%
+  unique()
+
+genes_filt <- all_gex %>%
+  dplyr::filter(gene %in% hca_mrks) %>%
+  pull(gene) %>%
+  unique()
+
+# Plots -------------------------------------------------------------------------------------
+cells_filt <- ct_dictionary %>%
+  na.omit()
+
+mi_atlas_mat_cpm <- mi_atlas_mat_cpm[, cells_filt$MI_ann]
+colnames(mi_atlas_mat_cpm) <- paste0("MI_", colnames(mi_atlas_mat_cpm) )
+
+hca_atlas_cpm <- hca_atlas_cpm[, cells_filt$HCA_ann]
+colnames(hca_atlas_cpm) <- cells_filt$MI_ann
+colnames(hca_atlas_cpm) <- paste0("HCA_", colnames(hca_atlas_cpm))
+
+cor_all <- cor(hca_atlas_cpm[genes_all,], mi_atlas_mat_cpm[genes_all,], method = "spearman")
+
+cor_filt <- cor(hca_atlas_cpm[genes_filt,], mi_atlas_mat_cpm[genes_filt,], method = "spearman")
+
+cor_all_tidy <- cor_all %>%
+  as.data.frame() %>%
+  rownames_to_column("atlas_a") %>%
+  pivot_longer(-atlas_a, names_to = "atlas_b", values_to = "spearman_cor") %>%
+  mutate(atlas_a = factor(atlas_a, 
+                          levels = paste0("HCA_",cells_filt$MI_ann)),
+         atlas_b =factor(atlas_b, 
+                         levels = paste0("MI_",cells_filt$MI_ann)))
+
+cor_filt_tidy <- cor_filt %>%
+  as.data.frame() %>%
+  rownames_to_column("atlas_a") %>%
+  pivot_longer(-atlas_a, names_to = "atlas_b", values_to = "spearman_cor") %>%
+  mutate(atlas_a = factor(atlas_a, 
+                          levels = paste0("HCA_",cells_filt$MI_ann)),
+         atlas_b =factor(atlas_b, 
+                         levels = paste0("MI_",cells_filt$MI_ann)))
+
+pdf("./results/hca_comparison/pseudobulk_exprcomp_.pdf", height = 4, width = 5)
+
+plot(cor_filt_tidy %>%
+  ggplot(aes(x = atlas_a, y = atlas_b, fill = spearman_cor)) +
   geom_tile() +
-  theme(axis.text.x = element_text(angle = 90,
-                                   hjust = 1,
-                                   vjust = 0.1),
-        axis.text = element_text(size = 12)) +
-  scale_fill_gradient(
-    low = "black",
-    high = "yellow")
-  
+  coord_equal() +
+  theme(axis.text.x  = element_text(angle = 90, hjust = 1, vjust =0.5)) +
+    ggtitle("Only marker genes")) #+
+  #scale_fill_gradient2(midpoint = 0.5, limits = c(0,1))
 
-pdf("./visium_results_manuscript/hca/js_distances_hca_celltypes_reduced.pdf")
-
-walk(hca_atlas_mats$dist_mats_cell_type, function(x) {
-  
-  draw(Heatmap(x, col = dist_fun))
-  
-} )
+plot(cor_all_tidy %>%
+       ggplot(aes(x = atlas_a, y = atlas_b, fill = spearman_cor)) +
+       geom_tile() +
+       coord_equal() +
+       theme(axis.text.x  = element_text(angle = 90, hjust = 1, vjust =0.5)) +
+       ggtitle("All expression")) #+
+  #scale_fill_gradient2(midpoint = 0.5, limits = c(0,1))
 
 dev.off()
-
-pdf("./visium_results_manuscript/hca/js_distances_hca_cellstates_reduced.pdf",
-    height = 20, width = 15)
-
-walk(hca_atlas_mats$dist_mats_cell_state, function(x) {
-  
-  draw(Heatmap(x, col = dist_fun))
-  
-} )
-
-dev.off()
-
-
-pdf("./visium_results_manuscript/hca/cor_distances_hca_celltypes_reduced.pdf")
-
-walk(hca_atlas_mats$cor_mats_cell_type, function(x) {
-  
-  draw(Heatmap(x, col = cor_fun))
-  
-} )
-
-dev.off()
-
-pdf("./visium_results_manuscript/hca/cor_distances_hca_cellstates_reduced.pdf",
-    height = 20, width = 15)
-
-walk(hca_atlas_mats$cor_mats_cell_state, function(x) {
-  
-  draw(Heatmap(x, col = cor_fun))
-  
-} )
-
-dev.off()
-
-

@@ -15,28 +15,35 @@ source("./analysis/utils/pseudobulk_utils.R")
 
 # Dictionary between atlases
 ct_dictionary <- read.table("./markers/hca_mi_ctannotations.txt", sep = "\t", header = T)
+sample_dict <- readRDS("./markers/snrna_patient_anns_revisions.rds")
+
+excluded_samples <- sample_dict %>%
+  dplyr::filter(patient_group != "group_1") %>%
+  pull(patient_id)
 
 # Our atlas, we could expect different grouping vars:
-mi_atlas <- readRDS("./visium_results_manuscript/integration/ps_integrated_data_fordeconv.rds")[[1]]
+mi_atlas <- readRDS("./processed_snrnaseq/integration/ps_integrated_rnasamples_ann.rds")[[1]]
+
 mi_atlas_meta <- mi_atlas[names(mi_atlas) == "annotations"][[1]] %>%
   dplyr::select(orig.ident, cell_type) %>%
-  group_by(orig.ident, cell_type) %>%
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  dplyr::select(patient_id, cell_type) %>%
+  group_by(patient_id, cell_type) %>%
   dplyr::summarize(ncells_ct = length(cell_type)) %>%
   dplyr::ungroup() %>%
-  dplyr::group_by(orig.ident) %>%
+  dplyr::group_by(patient_id) %>%
   dplyr::mutate(ncells_sample = sum(ncells_ct)) %>%
   dplyr::mutate(propcells_ct = ncells_ct/ncells_sample) %>%
   dplyr::left_join(ct_dictionary, by = c("cell_type" = "MI_ann")) %>%
   dplyr::mutate(unified_ct = cell_type,
-                sample = orig.ident,
+                sample = patient_id,
                 atlas = "MI") %>%
   na.omit() %>%
   ungroup() %>%
   dplyr::select(sample, unified_ct, propcells_ct, atlas)
 
-
 # HC atlas, we could expect different grouping vars:
-hca_atlas_meta <- readRDS("./visium_results_manuscript/integration/hca_pseudobulk.rds")[["nuclei"]][["annotations"]]  %>%
+hca_atlas_meta <- readRDS("./ext_data/hca_pseudobulk.rds")[["nuclei"]][["annotations"]]  %>%
   dplyr::select(sample, cell_type) %>%
   group_by(sample, cell_type) %>%
   dplyr::summarize(ncells_ct = length(cell_type)) %>%
@@ -55,6 +62,67 @@ hca_atlas_meta <- readRDS("./visium_results_manuscript/integration/hca_pseudobul
 
 all_compositions <- bind_rows(mi_atlas_meta, hca_atlas_meta)
 
+# First correlations between cell-types median compositions --------------------------
+
+all_medians <- all_compositions %>% group_by(unified_ct, atlas) %>%
+  summarize(median_prop = median(propcells_ct)) %>%
+  pivot_wider(names_from = atlas, values_from = median_prop)
+
+write.table(all_medians, 
+            col.names = T, row.names = F, quote = F, 
+            sep = ",", file = "./results/hca_comparison/median_prop_all.txt")
+
+cor_all <- cor.test(log10(all_medians$HCA), log10(all_medians$MI))
+
+pdf("./results/hca_comparison/median_prop_all.pdf")
+
+ggplot(all_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct, color = unified_ct)) +
+  ggrepel::geom_text_repel() +
+  geom_point() +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12)) +
+  ggtitle(paste0("Spearman Correlation, ", 
+                 round(cor_all$estimate, 3), 
+                 ", p-value = ",
+                 round(cor_all$p.value,3)))
+
+dev.off()
+
+# Then correlations between cell-types median compositions without disease pats
+# This should look better --------------------------
+
+healthy_medians <- all_compositions %>% 
+  dplyr::filter(! sample %in% excluded_samples) %>%
+  group_by(unified_ct, atlas) %>%
+  summarize(median_prop = median(propcells_ct)) %>%
+  pivot_wider(names_from = atlas, values_from = median_prop)
+
+write.table(healthy_medians, 
+            col.names = T, row.names = F, quote = F, 
+            sep = ",", file = "./results/hca_comparison/median_prop_healthy.txt")
+
+cor_healthy <- cor.test(log10(healthy_medians$HCA), log10(healthy_medians$MI))
+
+pdf("./results/hca_comparison/median_prop_healthy.pdf")
+
+ggplot(healthy_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct)) +
+  ggrepel::geom_text_repel() +
+  geom_point() +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12)) +
+  ggtitle(paste0("Spearman Correlation, ", 
+                 round(cor_healthy$estimate, 3), 
+                 ", p-value = ",
+                 round(cor_healthy$p.value,3)))
+
+dev.off()
+
 # Comparison of compositions ---------------------------------------------------------------
 
 vln_plts <- ggplot(all_compositions, aes(y = propcells_ct, 
@@ -65,11 +133,42 @@ vln_plts <- ggplot(all_compositions, aes(y = propcells_ct,
   facet_wrap(~unified_ct, ncol = 4,scales = "free_y") + theme_classic() +
   ylab("Proportions")
 
+
+write.table(all_compositions, file = "./results/hca_comparison/mall_compositions.txt", col.names = T, row.names = F, quote = F, )
+
+pdf("./results/hca_comparison/compositions_box_all.pdf")
+
+plot(vln_plts)
+
+dev.off()
+
+# Comparison of compositions (only healthy) --------------------------------------------------------
+
+healthy_compositions <- all_compositions %>%
+  dplyr::filter(! sample %in% excluded_samples)
+  
+vln_plts_h <- ggplot(healthy_compositions, aes(y = propcells_ct, 
+                                         x = atlas,
+                                         fill = atlas)) + 
+  geom_boxplot() +
+  geom_jitter(position = position_jitter(width = .05)) +
+  facet_wrap(~unified_ct, ncol = 4,scales = "free_y") + theme_classic() +
+  ylab("Proportions")
+
+
+write.table(healthy_compositions, file = "./results/hca_comparison/healthy_compositions.txt", col.names = T, row.names = F, quote = F, )
+
+pdf("./results/hca_comparison/compositions_box_healthy.pdf")
+
+plot(vln_plts_h)
+
+dev.off()
+
 # Proper statistical tests
 
 # First wilcoxon tests between shared cell-types
 
-all_compositions %>%
+wilcox_all <- all_compositions %>%
   group_by(unified_ct) %>%
   nest() %>%
   mutate(wilcox_res = map(data, function(x) {
@@ -82,25 +181,21 @@ all_compositions %>%
   select(unified_ct, wilcox_res) %>%
   unnest()
 
-# Second, stability of compositions
+write.table(wilcox_all, file = "./results/hca_comparison/wilcox_all.txt", col.names = T, row.names = F, quote = F)
 
-prop_variance <- all_compositions %>%
-  group_by(unified_ct, atlas) %>%
-  summarise(prop_sd = var(propcells_ct))
 
-wilcox.test(prop_sd ~ atlas, 
-            data = prop_variance, 
-            alternative = "two.sided", 
-            paired = F) %>% 
-  broom::tidy()
+wilcox_healthy <- healthy_compositions %>%
+  group_by(unified_ct) %>%
+  nest() %>%
+  mutate(wilcox_res = map(data, function(x) {
+    wilcox.test(propcells_ct ~ atlas, 
+                data = x, 
+                alternative = "two.sided", 
+                paired = F) %>% broom::tidy()
+    
+  })) %>%
+  select(unified_ct, wilcox_res) %>%
+  unnest()
 
-variance_plot <- ggplot(prop_variance, aes(x = atlas, 
-                                           y = prop_sd,
-                                           fill = atlas)) +
-  geom_boxplot() +
-  geom_jitter(position = position_jitter(width = .05)) +
-  ylab("std. dev. of cell-type proportions\
-       between samples")  +
-  theme(axis.text = element_text(size = "12"))
-
+write.table(wilcox_healthy, file = "./results/hca_comparison/wilcox_healthy.txt", col.names = T, row.names = F, quote = F)
 

@@ -4,8 +4,13 @@
 #' Here we estimate cell compositions from ATAC
 library(tidyverse)
 
-# Scell data meta --------------------------------------------------------------------------
-atac_meta <- read.csv("./processed_atac/metadata.csv")
+# ATAC data meta --------------------------------------------------------------------------
+atac_ann <- readRDS("./markers/atac_patient_anns_revisions.rds")
+
+atac_meta <- read.csv("./processed_atac/metadata.csv") %>%
+  dplyr::select(X, orig.ident, cell_type)  %>%
+  left_join(atac_ann, by = c("orig.ident" = "sample_id"))# Then fix the annotations ussing the updated table
+
 
 # Generate cell type counts -----------------------------------------------------------
 atac_props <- atac_meta %>%

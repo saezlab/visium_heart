@@ -53,8 +53,8 @@ run_colocalization <- function(slide,
 
 # Getting sample annotations --------------------------------------------------
 
-sample_dict <- read.table("./markers/visium_annotations_ext.txt", 
-                          sep = "\t", header = T)
+#sample_dict <- read.table("./markers/visium_annotations_ext.txt", 
+#                          sep = "\t", header = T)
 
 slide_files_folder <- "./processed_visium/objects/"
 slide_files <- list.files(slide_files_folder)

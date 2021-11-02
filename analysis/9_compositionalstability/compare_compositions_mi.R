@@ -104,7 +104,8 @@ props_cors %>%
   theme_classic() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
         legend.position = "bottom") +
-  scale_fill_gradient(high = "#ffd89b", low = "#19547b", limits = c(0,1)) 
+  scale_fill_gradient(high = "#ffd89b", low = "#19547b", limits = c(0,1)) +
+  coord_equal()
 
 dev.off()
 
