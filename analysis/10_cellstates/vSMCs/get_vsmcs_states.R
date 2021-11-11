@@ -13,7 +13,7 @@ source("./analysis/10_cellstates/get_state_summary.R")
 # Data evaluation ----------------------------------------------------------------
 # Here we do human cutoffs to define which cells to keep for state definition ----
 
-sc_data <- loadHDF5SummarizedExperiment("./results/ct_data/Fib/Fib_states_sce/")
+sc_data <- loadHDF5SummarizedExperiment("./results/ct_data/vSMCs/vSMCs_states_sce/")
 
 meta_data <- colData(sc_data) %>%
   as.data.frame() %>%
@@ -40,11 +40,11 @@ mt <- meta_data %>%
 qc_panel <- cowplot::plot_grid(doublet_score, features,
                                counts, mt, ncol = 2, align = "hv")
 
-pdf("./results/ct_data/Fib/qc_states.pdf")
+pdf("./results/ct_data/vSMCs/qc_states.pdf")
 plot(qc_panel)
 dev.off()
 
-# Parameters ---------------------------------------------------------------------
+#Parameters ---------------------------------------------------------------------
 
 # Global ----------------------------------
 patient_annotations <- readRDS("./markers/snrna_patient_anns_revisions.rds")
@@ -53,20 +53,20 @@ group_alias <- "state"
 
 # Load SCE object
 ct_folder <- "./results/ct_data/"
-ct_alias <- "Fib"
-exception <- c(0, 2, 7) # Here you define the cluster to exclude 
+ct_alias <- "vSMCs"
+exception <- NA # Here you define the cluster to exclude 
 perc_thrsh <- 0.1 #Minimum percentage of expression of a gene within a state to be considered
 n_samples_filt <- 5 # Minimum number of samples in each state
 
 all_panels <- summarize_state(ct_folder, ct_alias, 
                               exception, perc_thrsh, 
-                              n_samples_filt, background_exclude = "Fib")
-  
-# Annotate this with HCA
+                              n_samples_filt, background_exclude = "vSMCs")
 
-mi_markers <- readRDS("./results/ct_data/Fib/state_genelist.rds")
+# Run 
 
-hca_markers <- read_csv("./ext_data/hca_fibroblasts_mrkrs.csv") %>%
+mi_markers <- readRDS("./results/ct_data/vSMCs/state_genelist.rds")
+
+hca_markers <- read_csv("./ext_data/hca_vascular_mrkrs.csv") %>%
   dplyr::filter(logfoldchanges > 0, pvals_adj < 0.001) %>%
   dplyr::arrange(group, -logfoldchanges) %>%
   dplyr::group_by(group) %>%
@@ -80,59 +80,22 @@ hca_markers <- read_csv("./ext_data/hca_fibroblasts_mrkrs.csv") %>%
 
 # Function to do enrichment -----------------------------------------------------------------
 
-GSE_analysis = function(geneList,Annotation_DB){
-  
-  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
-  
-  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
-  rownames(ResultsDF) = names(Annotation_DB)
-  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
-  
-  DB_genecontent = length(unique(unlist(Annotation_DB)))
-  
-  GenesDB = DB_genecontent 
-  SelectedGenes = length(geneList)
-  
-  for(gset in rownames(ResultsDF)){
-    GP = length(Annotation_DB[[gset]])
-    GL = length(intersect(Annotation_DB[[gset]],geneList))
-    
-    ResultsDF[gset,"GenesInList"] = GL
-    ResultsDF[gset,"GenesInPathway"] = GP
-    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
-    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
-  }
-  
-  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
-  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
-  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
-  
-  ResultsDF = ResultsDF %>% 
-    rownames_to_column("gset") %>% 
-    mutate_at(c("GenesInPathway","GenesInList",
-                "p_value","corr_p_value"), 
-              as.numeric) %>% 
-    dplyr::arrange(corr_p_value,GenesInList)
-  
-  return(ResultsDF)
-  
-}
-
 label_mapping <- map(mi_markers, GSE_analysis, Annotation_DB = hca_markers) %>% 
   enframe() %>%
   unnest() %>%
-  dplyr::select(name, gset, corr_p_value)
+  dplyr::select(name, gset, corr_p_value) %>%
+  dplyr::filter(corr_p_value < 0.05)
+
 
 label_mapping_plt <- ggplot(label_mapping, aes(x = name, 
                                                y = gset, 
                                                size = -log10(corr_p_value))) +
-  geom_point()
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 
 
-pdf("./results/ct_data/Fib/label_mapping_plt.pdf")
+pdf("./results/ct_data/vSMCs/label_mapping_plt.pdf", height = 4, width = 5)
 
 plot(label_mapping_plt)
 
 dev.off()
-
-

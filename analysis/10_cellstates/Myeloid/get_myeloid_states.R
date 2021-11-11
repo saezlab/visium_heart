@@ -54,7 +54,7 @@ group_alias <- "state"
 # Load SCE object
 ct_folder <- "./results/ct_data/"
 ct_alias <- "Myeloid"
-exception <- c(1, 12, 9) # Here you define the cluster to exclude 
+exception <- c(0, 11, 13, 15, 16) # Here you define the cluster to exclude 
 perc_thrsh <- 0.1 #Minimum percentage of expression of a gene within a state to be considered
 n_samples_filt <- 5 # Minimum number of samples in each state
 

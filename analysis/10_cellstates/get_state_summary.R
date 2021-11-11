@@ -37,6 +37,8 @@ summarize_state <- function(ct_folder, ct_alias, exception,
   all_out <- paste0(ct_folder, ct_alias, "/states_funcomics.pdf")
   cor_plt <- paste0(ct_folder, ct_alias, "/states_cor.pdf")
   reg_net <- paste0("./reg_nets/processed/", ct_alias, ".txt")
+  ora_out <- paste0(ct_folder, ct_alias, "/state_ora.txt")
+  cor_file <- paste0(ct_folder, ct_alias, "/states_cor.csv")
   
   # Read object and filter gene expression ---------------------------------------
   print("Reading scell object and filtering lowly expressed genes")
@@ -162,7 +164,7 @@ summarize_state <- function(ct_folder, ct_alias, exception,
     dplyr::rename("state" = name)
   
   degs_ext %>%
-    dplyr::arrange(FDR) %>% 
+    dplyr::arrange(state, FDR) %>% 
   write.table(., col.names = T, 
               row.names = F, quote = F, sep = "\t",
               file = mlm_res)
@@ -193,6 +195,8 @@ summarize_state <- function(ct_folder, ct_alias, exception,
                                      hjust = 1, 
                                      vjust = 0.5)) +
     scale_fill_gradient2(limits = c(-1,1))
+  
+  cor_states %>% write_csv(file = cor_file)
   
   # Plotting marker genes
   
@@ -247,6 +251,10 @@ summarize_state <- function(ct_folder, ct_alias, exception,
   saveRDS(state_genes, state_gene_list)
   
   # Funcomics -------------------------------
+  
+  # ORA ------------------------------------
+  run_ora <- run_ora(degs_ext = degs_ext,
+                     ora_out = ora_out)
   
   # GSEA -------
   gsea_res <- run_gsea(degs_ext = degs_ext,
@@ -355,7 +363,8 @@ loadNfilter_sce <- function(sc_data_file, gene_filter_out, exception) {
   
   # First let's filter all genes that are extremely lowly expressed
   expressed_genes <- counts(sc_data) > 0
-  gene_ix <- rowSums(expressed_genes) > min_spots
+  gene_ix <- rowSums(expressed_genes) > 0
+  #gene_ix <- rowSums(expressed_genes) > min_spots
   sc_data <- sc_data[gene_ix, ]
   expressed_genes <- expressed_genes[gene_ix, ]
     
@@ -677,7 +686,7 @@ run_gsea <- function(degs_ext, gsea_out) {
       set_names(x$rank_ord, x$gene) %>%
         na.omit()
     })) %>%
-    rename("gls_rank" = data) %>%
+    dplyr::rename("gls_rank" = data) %>%
     mutate(gsea_stats = map(gls_rank, function(t_vals) {
       fgsea(pathways = gene_sets,stats = t_vals)
     }))
@@ -789,7 +798,7 @@ run_dorothea_t <- function(degs_ext, tf_out, reg_net) {
                        .target = "target",
                        .mor = "mor",
                        .likelihood = "likelihood",
-                       times = 10000)
+                       times = 1000)
   
   dorothea_res <- dorothea_res %>%
     dplyr::filter(statistic == "norm_wmean") %>%
@@ -803,4 +812,103 @@ run_dorothea_t <- function(degs_ext, tf_out, reg_net) {
   
   return(dorothea_res)
   
+}
+
+GSE_analysis = function(geneList,Annotation_DB){
+  
+  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
+  
+  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
+  rownames(ResultsDF) = names(Annotation_DB)
+  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
+  
+  DB_genecontent = length(unique(unlist(Annotation_DB)))
+  
+  GenesDB = DB_genecontent 
+  SelectedGenes = length(geneList)
+  
+  for(gset in rownames(ResultsDF)){
+    GP = length(Annotation_DB[[gset]])
+    GL = length(intersect(Annotation_DB[[gset]],geneList))
+    
+    ResultsDF[gset,"GenesInList"] = GL
+    ResultsDF[gset,"GenesInPathway"] = GP
+    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
+    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
+  }
+  
+  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
+  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
+  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
+  
+  ResultsDF = ResultsDF %>% 
+    rownames_to_column("gset") %>% 
+    mutate_at(c("GenesInPathway","GenesInList",
+                "p_value","corr_p_value"), 
+              as.numeric) %>% 
+    dplyr::arrange(corr_p_value,GenesInList)
+  
+  return(ResultsDF)
+  
+}
+
+run_ora <- function(degs_ext, ora_out) {
+  print("running ora")
+  
+  pos_state_genes <- degs_ext %>% 
+    arrange(state, -logFC) %>%
+    dplyr::filter(PValue <= 0.05, logFC > 0) %>%
+    group_by(state) %>%
+    dplyr::slice(1:50) %>%
+    dplyr::select(state, gene) %>%
+    nest() %>%
+    dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+    deframe()
+  
+  neg_state_genes <- degs_ext %>% 
+    arrange(state, logFC) %>%
+    dplyr::filter(PValue <= 0.05, logFC < 0) %>%
+    group_by(state) %>%
+    dplyr::slice(1:50) %>%
+    dplyr::select(state, gene) %>%
+    nest() %>%
+    dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+    deframe()
+  
+  genes_to_cor <- c(unlist(pos_state_genes), unlist(neg_state_genes)) %>% unique()
+  
+  gex_red <- degs_ext %>% 
+    dplyr::select(state, gene, logFC) %>%
+    dplyr::filter(gene %in% genes_to_cor) %>%
+    pivot_wider(names_from = state, values_from = logFC, values_fill = 0) %>%
+    column_to_rownames("gene") %>%
+    as.matrix() %>%
+    cor()
+  
+  # We make a really flexible cut-off for ORA analysis
+  
+  gene_sets <- readRDS("./markers/Genesets_Dec19.rds")
+  
+  gene_sets <- gene_sets$MSIGDB_CANONICAL
+  
+  up_ora <- map(pos_state_genes, GSE_analysis, Annotation_DB = gene_sets) %>% 
+    enframe() %>%
+    unnest() %>%
+    dplyr::select(name, gset, p_value, corr_p_value) %>%
+    dplyr::filter(p_value < 0.05) %>%
+    dplyr::mutate(type = "upregulated")
+  
+  down_ora <- map(neg_state_genes, GSE_analysis, Annotation_DB = gene_sets) %>% 
+    enframe() %>%
+    unnest() %>%
+    dplyr::select(name, gset, p_value, corr_p_value) %>%
+    dplyr::filter(p_value < 0.05) %>%
+    dplyr::mutate(type = "downregulated")
+  
+  ora_res <- bind_rows(up_ora, down_ora) %>%
+    arrange(name, p_value)
+  
+  write.table(ora_res, file = ora_out, row.names = F, col.names = T, sep = "\t", quote = FALSE)
+  
+  return(ora_res)
 }
