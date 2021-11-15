@@ -19,9 +19,9 @@ colnames(pseudobulk_data_counts) <- pseudobulk_data$slide.meta.data...vars.
 # Normalization and filtering parameters... Are these too strict?
 
 pseudobulk_data_counts <- edgeR_filtering(pseudobulk_data_counts, 
-                                          min.count = 100,
-                                          min.prop = 0.65,
-                                          min.total.count = 100)
+                                          min.count = 10,
+                                          min.prop = 0.05,
+                                          min.total.count = 10)
 
 
 norm_pseudobulk_data_counts <- cpm_norm(pseudobulk_data_counts)
@@ -66,6 +66,7 @@ tf_acts <- decoupleR::run_wmean(mat = norm_pseudobulk_data_counts,
                                      .mor = "mor",
                                      .likelihood = "likelihood",
                                      times = 1000)
+
 
 # Use weighted mean (normalized)
 
@@ -144,10 +145,13 @@ hint_res <- hint_res %>%
   dplyr::mutate(source = toupper(source))
 
 # Here we make all genes upper
-
 TF_annotation <- hint_res %>%
   dplyr::filter(score_hint == max(score_hint)) %>%
   dplyr::select(source, condition)
+
+# Save HINT/Regulome activities
+
+write_csv(hint_res, "./results/atacvrna/HINT_regulome_unif_acts.csv")
 
 # Let's do some summaries
 
@@ -163,6 +167,8 @@ ct_correlation <- hint_res %>%
   select(TFcor) %>%
   unnest()
 
+write_csv(ct_correlation, "./results/atacvrna/HINT_regulome_ct_cors.csv")
+
 tf_correlation <- hint_res %>%
   group_by(source) %>%
   nest() %>%
@@ -175,10 +181,12 @@ tf_correlation <- hint_res %>%
   select(TFcor) %>%
   unnest() %>%
   ungroup() %>%
-  dplyr::filter(estimate > 0.5) %>%
+  dplyr::filter(estimate > 0.3) %>%
   left_join(TF_annotation) %>%
   dplyr::arrange(condition, -estimate)
   
+write_csv(tf_correlation, "./results/atacvrna/HINT_regulome_tf_cors.csv")
+
 # Make a selection and create heatmaps
 selected_TFs <- tf_correlation %>%
   group_by(condition) %>%
@@ -189,6 +197,8 @@ plt_df <- hint_res %>%
   dplyr::filter(source %in% selected_TFs) %>%
   dplyr::mutate(source = factor(source,
                                 levels = selected_TFs))
+
+write_csv(plt_df, file = "./results/atacvrna/atlasTFconsistency.csv")
 
 hmapA <- plt_df %>%
   ggplot(aes(x = condition, y = source, fill = score_hint)) +
@@ -212,6 +222,23 @@ pdf("./results/atacvrna/atlasTFconsistency.pdf", height = 6, width = 8)
 plot(fig_panel)
 dev.off()
 
+# Now let's check cell correlations
+
+ct_correlation_filt <- hint_res %>%
+  dplyr::filter(source %in% unique(tf_correlation$source)) %>%
+  group_by(condition) %>%
+  nest() %>%
+  mutate(TFcor = map(data, function(dat) {
+    
+    cor.test(dat$score_hint, dat$std_score, method = "spearman") %>%
+      broom::tidy()
+    
+  })) %>%
+  select(TFcor) %>%
+  unnest()
+
+write_csv(ct_correlation_filt, "./results/atacvrna/HINT_regulome_ct_cors_filt.csv")
+
 # Let's try a second test, where we include gene expression
 
 scaled_expression <- t(norm_pseudobulk_data_counts[, hint_res$condition %>% 
@@ -226,28 +253,52 @@ all_mods <- hint_res %>%
   dplyr::filter(!is.na(expr))
 
 ct_correlation_all <- all_mods %>%
+  dplyr::filter(source %in% unique(tf_correlation$source)) %>%
   group_by(condition) %>%
   nest() %>%
   mutate(hint_regulon_cor = map(data, function(dat) {
     
-    cor.test(dat$score_hint, dat$std_score, method = "spearman") %>%
+    cor.test(abs(dat$score_hint), abs(dat$std_score), method = "spearman") %>%
       broom::tidy()
     
   })) %>%
   mutate(hint_expr_cor = map(data, function(dat) {
     
-    cor.test(dat$score_hint, dat$expr, method = "spearman") %>%
+    cor.test(abs(dat$score_hint), abs(dat$expr), method = "spearman") %>%
       broom::tidy()
     
   })) %>%
   mutate(regulon_expr_cor = map(data, function(dat) {
     
-    cor.test(dat$std_score, dat$expr, method = "spearman") %>%
+    cor.test(abs(dat$std_score), abs(dat$expr), method = "spearman") %>%
       broom::tidy()
     
   }))
 
-pdf("./results/atacvrna/TF_modality_consistency.pdf")
+ct_correlation_all_sign <- all_mods %>%
+  dplyr::filter(source %in% unique(tf_correlation$source)) %>%
+  group_by(condition) %>%
+  nest() %>%
+  mutate(hint_regulon_cor = map(data, function(dat) {
+    
+    cor.test((dat$score_hint), (dat$std_score), method = "spearman") %>%
+      broom::tidy()
+    
+  })) %>%
+  mutate(hint_expr_cor = map(data, function(dat) {
+    
+    cor.test((dat$score_hint), (dat$expr), method = "spearman") %>%
+      broom::tidy()
+    
+  })) %>%
+  mutate(regulon_expr_cor = map(data, function(dat) {
+    
+    cor.test((dat$std_score), (dat$expr), method = "spearman") %>%
+      broom::tidy()
+    
+  }))
+
+saveRDS(ct_correlation_all_sign, "./results/atacvrna/TF_modality_consistency.rds")
 
 ct_plts <- ct_correlation_all %>%
   dplyr::select(-data) %>%
@@ -260,7 +311,22 @@ ct_plts <- ct_correlation_all %>%
   scale_fill_gradient2() +
   ylab("Cell type") + xlab("Modality comparison")
 
+ct_plts_sign <- ct_correlation_all_sign %>%
+  dplyr::select(-data) %>%
+  pivot_longer(-condition) %>%
+  unnest() %>%
+  ggplot(aes(x = name, y = condition, fill = estimate)) +
+  geom_tile() +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 10)) +
+  scale_fill_gradient2() +
+  ylab("Cell type") + xlab("Modality comparison")
+
+
+pdf("./results/atacvrna/TF_modality_consistency.pdf", height = 4, width = 3)
+
 plot(ct_plts)
+plot(ct_plts_sign)
 
 dev.off()
 
