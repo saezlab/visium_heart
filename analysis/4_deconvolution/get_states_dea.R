@@ -8,22 +8,21 @@
 library(Seurat)
 library(tidyverse)
 
-dea_folder <- "./results/ct_data/"
+dea_folder <- "./results/ct_data_filt/"
 ct_folders <- list.dirs(dea_folder,recursive = F,full.names = F)
 
 gene_list_suffix <- "state_mrks.txt"
 
 state_df <- tibble(ct = ct_folders, gene_set_file = paste0(dea_folder, ct_folders, "/", gene_list_suffix)) %>%
-  dplyr::filter(ct %in% c("Fib", "Myeloid")) %>%
   mutate(gene_sets = map2(ct, gene_set_file, function(x,y) {
 
     degs_ext <- read_table2(y)
     
     pos_state_genes <- degs_ext %>% 
       arrange(state, -logFC) %>%
-      dplyr::filter(FDR <= 0.15, logFC > 0) %>%
+      dplyr::filter(PValue <= 0.05, logFC > 0) %>%
       group_by(state) %>%
-      dplyr::slice(1:50) %>%
+      dplyr::slice(1:100) %>%
       dplyr::mutate(state = paste0(x, "_", (state)),
                     mor = 1) %>%
       rename("source" = state,
@@ -32,9 +31,9 @@ state_df <- tibble(ct = ct_folders, gene_set_file = paste0(dea_folder, ct_folder
     
     neg_state_genes <- degs_ext %>% 
       arrange(state, logFC) %>%
-      dplyr::filter(FDR <= 0.15, logFC < 0) %>%
+      dplyr::filter(PValue <= 0.05, logFC < 0) %>%
       group_by(state) %>%
-      dplyr::slice(1:50) %>%
+      dplyr::slice(1:100) %>%
       dplyr::mutate(state = paste0(x, "_", (state)),
                     mor = -1) %>%
       rename("source" = state,
