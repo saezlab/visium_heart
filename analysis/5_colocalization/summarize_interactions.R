@@ -112,6 +112,10 @@ plot(importance_panel)
 
 dev.off()
 
+summarized_interactions %>% unnest() %>% write_csv(., file = "./results/tissue_structure/colocalization/misty_importances_ct.csv")
+
+
+
 # What if we use the mean?
 
 misty_res <- collect_results(paste0(misty_out_folder, misty_outs))
@@ -230,3 +234,6 @@ get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_15_CK293.
                       pdf_file = "./results/tissue_structure/misty/figure_examples/Visium_15_CK293_vsmcs.pdf",
                       cells = c("vSMCs", "Endo"))
 
+get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_3_CK281.rds",
+                      pdf_file = "./results/tissue_structure/misty/figure_examples/Visium_3_CK281_vsmcs.pdf",
+                      cells = c("vSMCs", "Endo"))
