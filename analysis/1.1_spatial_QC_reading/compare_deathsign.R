@@ -21,13 +21,20 @@ pat_meta <- left_join(snrna_qc, spatial_qc) %>%
 patient_ann  <- readRDS("./markers/visium_patient_anns_revisions.rds") %>%
   left_join(pat_meta)
 
+pat_meta <- pat_meta %>% 
+  dplyr::mutate(loss = ifelse(perc_spot_loss >= 0.025,
+                              TRUE, FALSE))
+
 pdf("results/cell_death/spot_loss_ncells.pdf", height = 4, width = 4)
 print(ggplot(pat_meta, aes(x = log10(ncells), y = perc_spot_loss)) + geom_point())
+
+print(ggplot(pat_meta, aes(y = log10(ncells), x = loss, color = loss)) + geom_boxplot() +
+  geom_jitter())
 dev.off()
 
 # First find gene sets of interest
 gsets <- readRDS("./markers/Genesets_Dec19.rds")
-gsets <- c(gsets$MSIGDB_HMARKS, gsets$MSIGDB_CANONICAL)
+gsets <- c(gsets$MSIGDB_HMARKS, gsets$MSIGDB_CANONICAL, gsets$MSIGDB_GO_BIOLPROC)
   
 apoptosis <- gsets[grepl("apoptosis", 
                          names(gsets),
@@ -36,11 +43,38 @@ necrosis <- gsets[grepl("necrosis",
                         names(gsets),
                         ignore.case = T)]
 
-death_gsets <- c(apoptosis, necrosis)
+death <- gsets[grepl("death", 
+                     names(gsets),
+                     ignore.case = T)]
+
+death_gsets <- c(apoptosis, necrosis, death)
 
 # Add these genesets into filtered slides...
 
-visium_folder <- "./processed_visium/objects/"
+death_gsets <- enframe(death_gsets) %>%
+  unnest() %>%
+  mutate(mor = 1,
+         likelihood = 1) %>%
+  dplyr::rename("source" = name,
+                "target" = value) %>%
+  unique()
+
+
+estimate_death_scores <- function(slide_file) {
+  print(slide_file)
+  
+  visium_slide <- readRDS(slide_file)
+  
+  visium_slide <- get_wmean_score(visium_slide = visium_slide,
+                                  network = death_gsets,
+                                  assay = "Spatial",
+                                  module_name = "death_gsets")
+  
+  GetAssayData(visium_slide, assay = "death_gsets")
+  
+}
+
+visium_folder <- "/Volumes/RicoData/mi_atlas_extradata/processed_visium_unfiltered/objects/"
 sample_file <- list.files(visium_folder)
 
 param_df <- tibble(sample_id = gsub("[.]rds", "", 
@@ -48,77 +82,126 @@ param_df <- tibble(sample_id = gsub("[.]rds", "",
                    slide_file = paste0(visium_folder,
                                        sample_file))
 
-
-estimate_death_scores <- function(slide_file) {
-  
-  visium_slide <- readRDS(slide_file)
-  
-  visium_slide <- getTF_matrix_MS(visium_slide = visium_slide,
-                                  MS_regulon = death_gsets,
-                                  assay = "SCT",
-                                  module_name = "death_gsets")
-  
-  sum_vector <- GetAssayData(visium_slide, assay = "death_gsets") %>%
-    rowSums() 
-  
-  mean_vector <- GetAssayData(visium_slide, assay = "death_gsets") %>%
-    rowMeans() 
-  
-  tibble("gset" = names(sum_vector), 
-         "sum_score" = sum_vector,
-         "mean_score" = mean_vector)
-  
-}
-
 cell_death_scores <- param_df %>%
-  mutate(death_scores = map(slide_file, estimate_death_scores)) %>%
-  dplyr::select(sample_id, death_scores) %>%
-  unnest()
+  mutate(death_scores = map(slide_file, estimate_death_scores))
 
-selected_gsets <- c("HALLMARK-APOPTOSIS")
+saveRDS(cell_death_scores, file = "./results/cell_death/cell_death_scores.rds")
 
-plot_data <- cell_death_scores %>%
-  left_join(patient_ann) %>%
-  dplyr::filter(gset %in% selected_gsets) %>%
-  group_by(gset, patient_id) %>%
-  mutate(sum_score = mean(sum_score),
-         mean_score = mean(mean_score)) %>%
-  dplyr::select(sum_score, mean_score, ncells, perc_spot_loss, patient_group) %>%
-  dplyr::mutate(basic_def = ifelse(patient_group == "group_1", "high", "low")) %>%
-  unique()
+# We can try the simplest which is to take the mean 
+# If more spots contain these death regions then they will drag the mean
 
-wilcox.test(ncells ~ basic_def, plot_data, alternative = "greater")
-wilcox.test(mean_score ~ basic_def, plot_data, alternative = "less")
-
-ncells_plot <- plot_data %>%
-  ggplot(aes(x = patient_group, y = ncells)) +
-  geom_boxplot() +
+n_cells_plt <- patient_ann %>%
+  dplyr::select(patient_id, patient_group, ncells) %>%
+  unique() %>%
+  ggplot(aes(x = patient_group, y = ncells, color = patient_group)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(pch = 21, position = position_jitter()) +
   theme_classic() +
-  theme(axis.text = element_text(size = 11),
-        axis.title = element_text(size=12),
-        axis.text.x = element_text(angle = 90)) +
-  ylab("N nuclei in snRNAseq") +
-  xlab("")
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none") +
+  ggtitle("number of cells")
 
+pdf("./results/cell_death/cell_numbers.pdf", height = 4, width = 3)
 
-apoptosis_plot <- plot_data %>%
-  ggplot(aes(x = patient_group, y = mean_score)) +
-  geom_boxplot() +
-  theme_classic() +
-  theme(axis.text = element_text(size = 11),
-        axis.title = element_text(size=12),
-        axis.text.x = element_text(angle = 90)) +
-  ylab("Apoptosis signature") +
-  xlab("")
-
-
-pdf("results/cell_death/cell_death_qc.pdf", height = 3.5, width = 5)
-
-cell_death_qc <- cowplot::plot_grid(ncells_plot, apoptosis_plot, align = "hv")
-plot(cell_death_qc)
+plot(n_cells_plt)
 
 dev.off()
 
+prop_scores <- map(set_names(cell_death_scores$death_scores, 
+              cell_death_scores$sample_id), function(x) {
+                pos_set <- (x > 1)
+                m_s <- rowMeans(pos_set, na.rm = T)
+                m_s <- m_s/ncol(x)
+       tibble(gset = names(m_s), score = m_s)
+     }) %>%
+  enframe() %>%
+  unnest() %>%
+  left_join(patient_ann %>% dplyr::select(sample_id, patient_group) %>% unique(),
+            by = c("name" = "sample_id")) %>%
+  group_by(gset) %>%
+  nest()
+
+mean_scores <- map(set_names(cell_death_scores$death_scores, 
+                             cell_death_scores$sample_id), function(x) {
+                               x[is.infinite(x)] <- NA
+                               m_s <- rowMeans(x, na.rm = T)
+                               tibble(gset = names(m_s), score = m_s)
+                             }) %>%
+  enframe() %>%
+  unnest() %>%
+  left_join(patient_ann %>% dplyr::select(sample_id, patient_group) %>% unique(),
+            by = c("name" = "sample_id")) %>%
+  group_by(gset) %>%
+  nest()
+
+prop_inf <- map(set_names(cell_death_scores$death_scores, 
+                          cell_death_scores$sample_id), function(x) {
+                            pos_set <- is.infinite(x)
+                            m_s <- rowSums(pos_set, na.rm = T)
+                            m_s <- m_s/ncol(x)
+                            tibble(gset = names(m_s), score = m_s)
+                          }) %>%
+  enframe() %>%
+  unnest() %>%
+  left_join(patient_ann %>% dplyr::select(sample_id, patient_group) %>% unique(),
+            by = c("name" = "sample_id")) %>%
+  group_by(gset) %>%
+  nest()
 
 
+pdf("./results/cell_death/functional_meanscores.pdf", height = 4, width = 3)
 
+walk2(mean_scores$gset, mean_scores$data, function(g,d) {
+  
+  b_plt <- d %>%
+    ggplot(aes(x = patient_group, y = score, color = patient_group)) +
+    geom_boxplot(outlier.size = 0) +
+    geom_point(pch = 21, position = position_jitter()) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 90),
+          legend.position = "none") +
+    ggtitle(g)
+  
+  plot(b_plt)
+  
+})
+
+dev.off()
+
+pdf("./results/cell_death/functional_propscores.pdf", height = 4, width = 3)
+
+walk2(prop_scores$gset, prop_scores$data, function(g,d) {
+  
+  b_plt <- d %>%
+    ggplot(aes(x = patient_group, y = score, color = patient_group)) +
+    geom_boxplot(outlier.size = 0) +
+    geom_point(pch = 21, position = position_jitter()) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 90),
+          legend.position = "none") + 
+    ggtitle(g)
+  
+  plot(b_plt)
+  
+})
+
+dev.off()
+
+pdf("./results/cell_death/infinite_props.pdf", height = 4, width = 3)
+
+walk2(prop_inf$gset, prop_inf$data, function(g,d) {
+  
+  b_plt <- d %>%
+    ggplot(aes(x = patient_group, y = score, color = patient_group)) +
+    geom_boxplot() +
+    geom_point() +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 90),
+          legend.position = "none") + 
+    ggtitle(g)
+  
+  plot(b_plt)
+  
+})
+
+dev.off()
