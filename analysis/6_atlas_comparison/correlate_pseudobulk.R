@@ -111,6 +111,9 @@ correlations_filtered <- all_gex %>%
   select(cor.res) %>%
   unnest()
 
+write_csv(correlations_all, "./results/hca_comparison/ct_correlations_all.csv")
+write_csv(correlations_filtered, "./results/hca_comparison/ct_correlations_filtered.csv")
+
 genes_all <- all_gex %>%
   pull(gene) %>%
   unique()
@@ -153,7 +156,11 @@ cor_filt_tidy <- cor_filt %>%
          atlas_b =factor(atlas_b, 
                          levels = paste0("MI_",cells_filt$MI_ann)))
 
-pdf("./results/hca_comparison/pseudobulk_exprcomp_.pdf", height = 4, width = 5)
+write_csv(cor_all_tidy, "./results/hca_comparison/all_correlations_all.csv")
+write_csv(cor_filt_tidy, "./results/hca_comparison/all_correlations_filtered.csv")
+
+
+pdf("./results/hca_comparison/pseudobulk_exprcomp_hca.pdf", height = 4, width = 5)
 
 plot(cor_filt_tidy %>%
   ggplot(aes(x = atlas_a, y = atlas_b, fill = spearman_cor)) +
@@ -172,3 +179,13 @@ plot(cor_all_tidy %>%
   #scale_fill_gradient2(midpoint = 0.5, limits = c(0,1))
 
 dev.off()
+
+# Finally do the enrichment of markers
+
+
+
+
+
+
+
+

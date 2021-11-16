@@ -68,15 +68,13 @@ all_medians <- all_compositions %>% group_by(unified_ct, atlas) %>%
   summarize(median_prop = median(propcells_ct)) %>%
   pivot_wider(names_from = atlas, values_from = median_prop)
 
-write.table(all_medians, 
-            col.names = T, row.names = F, quote = F, 
-            sep = ",", file = "./results/hca_comparison/median_prop_all.txt")
+write_csv(all_medians, file = "./results/hca_comparison/hcacomp_med_prop_all.csv")
 
-cor_all <- cor.test(log10(all_medians$HCA), log10(all_medians$MI))
+cor_all <- cor.test(log10(all_medians$HCA), log10(all_medians$MI), method = "spearman")
 
-pdf("./results/hca_comparison/median_prop_all.pdf")
+pdf("./results/hca_comparison/hcacomp_medprop_all.pdf", height = 3, width = 3)
 
-ggplot(all_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct, color = unified_ct)) +
+ggplot(all_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct)) +
   ggrepel::geom_text_repel() +
   geom_point() +
   theme_classic() +
@@ -84,7 +82,7 @@ ggplot(all_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct, color
         axis.text = element_text(size = 12),
         axis.text.x = element_text(size = 12),
         axis.text.y = element_text(size = 12)) +
-  ggtitle(paste0("Spearman Correlation, ", 
+  ggtitle(paste0("Spearman Correlation, \n", 
                  round(cor_all$estimate, 3), 
                  ", p-value = ",
                  round(cor_all$p.value,3)))
@@ -100,13 +98,12 @@ healthy_medians <- all_compositions %>%
   summarize(median_prop = median(propcells_ct)) %>%
   pivot_wider(names_from = atlas, values_from = median_prop)
 
-write.table(healthy_medians, 
-            col.names = T, row.names = F, quote = F, 
-            sep = ",", file = "./results/hca_comparison/median_prop_healthy.txt")
+write_csv(healthy_medians,
+            file = "./results/hca_comparison/hcacom_medprop_healthy.csv")
 
-cor_healthy <- cor.test(log10(healthy_medians$HCA), log10(healthy_medians$MI))
+cor_healthy <- cor.test(log10(healthy_medians$HCA), log10(healthy_medians$MI), method = "spearman")
 
-pdf("./results/hca_comparison/median_prop_healthy.pdf")
+pdf("./results/hca_comparison/hcacom_medprop_healthy.pdf", height = 3, width = 3)
 
 ggplot(healthy_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct)) +
   ggrepel::geom_text_repel() +
@@ -116,7 +113,7 @@ ggplot(healthy_medians, aes(x = log10(HCA), y = log10(MI), label = unified_ct)) 
         axis.text = element_text(size = 12),
         axis.text.x = element_text(size = 12),
         axis.text.y = element_text(size = 12)) +
-  ggtitle(paste0("Spearman Correlation, ", 
+  ggtitle(paste0("Spearman Correlation, \n", 
                  round(cor_healthy$estimate, 3), 
                  ", p-value = ",
                  round(cor_healthy$p.value,3)))
@@ -134,7 +131,7 @@ vln_plts <- ggplot(all_compositions, aes(y = propcells_ct,
   ylab("Proportions")
 
 
-write.table(all_compositions, file = "./results/hca_comparison/mall_compositions.txt", col.names = T, row.names = F, quote = F, )
+write.table(all_compositions, file = "./results/hca_comparison/all_compositions.txt", col.names = T, row.names = F, quote = F, )
 
 pdf("./results/hca_comparison/compositions_box_all.pdf")
 
