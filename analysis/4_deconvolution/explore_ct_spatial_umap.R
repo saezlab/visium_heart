@@ -47,7 +47,7 @@ sc_data$niche <- cluster_info[colnames(sc_data), "ct_niche"]
 
 colData(sc_data) <- cbind(colData(sc_data), integrated_compositions[colnames(sc_data),])
 
-pdf("./results/niche_mapping/ct_niches/integrated_compositions.rds", height = 4, width = 4.5)
+pdf("./results/niche_mapping/ct_niches/ct_ILR_umap_exploration.pdf", height = 4, width = 4.5)
 
 plotReducedDim(sc_data, dimred = "UMAP_ILR", colour_by = "niche")
 
