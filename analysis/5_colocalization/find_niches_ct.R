@@ -55,6 +55,8 @@ rm(list_matrices)
 # Order it as meta data
 integrated_compositions <- integrated_compositions[atlas_meta$row_id, ]
 
+saveRDS(integrated_compositions, "./results/niche_mapping/ct_niches/integrated_compositions.rds")
+
 # Generate ILR transformation
 baseILR <- ilrBase(x = integrated_compositions,
                    method = "basic")

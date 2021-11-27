@@ -58,12 +58,12 @@ mi_props_mean <- mi_props %>%
   select(cor_res) %>%
   unnest() 
 
-write.table(mi_props_mean, file = "./results/compositions/patientgroup_compositions.txt", 
+write.table(mi_props_mean, file = "./results/compositions/patientgroup_compositions_cor.txt", 
             col.names = T, row.names = F, quote = F, sep = "\t")
 
 
 
-pdf(file = "./results/compositions/patientgroup_compositions.pdf", height = 3, width = 3.5)
+pdf(file = "./results/compositions/patientgroup_compositions_cor.pdf", height = 3, width = 3.5)
 
 mi_props_mean %>%
   ggplot(aes(x = patient_group, y = comparison, fill = estimate)) +
@@ -80,7 +80,7 @@ dev.off()
 
 # Let's create 4 panels
 
-pdf(file = "./results/sample_comparison/compositions/rna_cellcomps.pdf", height = 4, width = 5)
+pdf(file = "./results/sample_comparison/compositions/rna_cellcomps_comparisons.pdf", height = 4, width = 5)
 
 rna_compositions_plt <- ggplot(mi_props, aes(x = patient_group, y = sn_prop_cells, color = patient_group)) +
   geom_boxplot() +
@@ -95,7 +95,7 @@ plot(rna_compositions_plt)
 
 dev.off()
 
-pdf(file = "./results/sample_comparison/compositions/atac_cellcomps.pdf", height = 4, width = 5)
+pdf(file = "./results/sample_comparison/compositions/atac_cellcomps_comparisons.pdf", height = 4, width = 5)
 
 atac_compositions_plt <- ggplot(mi_props, aes(x = patient_group, y = atac_prop_cells, color = patient_group)) +
   geom_boxplot() +
@@ -110,7 +110,7 @@ plot(atac_compositions_plt)
 
 dev.off()
 
-pdf(file = "./results/sample_comparison/compositions/spatial_cellcomps.pdf", height = 4, width = 5)
+pdf(file = "./results/sample_comparison/compositions/spatial_cellcomps_comparisons.pdf", height = 4, width = 5)
 
 spatial_compositions_plt <- ggplot(mi_props, aes(x = patient_group, y = sp_prop_cells, color = patient_group)) +
   geom_boxplot() +
@@ -134,6 +134,8 @@ multiview_props <- mi_props %>%
   summarise(multiview_mean_prop = mean(value)) %>%
   left_join(pat_anns)
 
+multiview_props %>% write_csv("./results/sample_comparison/compositions/momics_cellcomps.csv")
+
 # Statistical tests:
 
 kwallis_comps <- multiview_props %>% 
@@ -153,7 +155,7 @@ kwallis_comps <- multiview_props %>%
 
 
 write.table(kwallis_comps,
-              file = "./results/sample_comparison/compositions/kruskall_wallis_momics.txt", 
+              file = "./results/sample_comparison/compositions/kruskall_wallis_momics_cellcomps.txt", 
               col.names = T, row.names = F, quote = F, sep = "\t")
 
 
@@ -175,6 +177,41 @@ multiview_compositions_plt <- multiview_props %>%
   xlab("")
 
 plot(multiview_compositions_plt)
+
+dev.off()
+
+# Generate the clustering based on cell compositions
+
+multiview_props_mat <- multiview_props %>%
+  dplyr::select(-patient_group) %>%
+  pivot_wider(names_from = cell_type, values_from = multiview_mean_prop) %>%
+  as.data.frame() %>%
+  column_to_rownames("patient_id") %>%
+  as.matrix()
+
+# Generate ILR transformation
+baseILR <- ilrBase(x = multiview_props_mat,
+                   method = "basic")
+
+cell_ilr <- as.matrix(ilr(multiview_props_mat, baseILR))
+
+colnames(cell_ilr) <- paste0("ILR_", 1:ncol(cell_ilr))
+
+gex_hclust <- eclust(cell_ilr, "hclust", k = 3)
+
+# Make color palette
+
+color_palette <- tibble(patient_id = gex_hclust$labels[gex_hclust$order]) %>%
+  left_join(pat_anns[,c("patient_group", "patient_id")] %>% unique()) %>%
+  left_join(tibble(patient_group = c("group_1", "group_2", "group_3"),
+                   col = c("red", "darkgreen", "blue")))
+
+pdf("./results/sample_comparison/compositions/momics_cellcomps_patient_clustering.pdf", height = 6, width = 5)
+
+plot(fviz_dend(gex_hclust, 
+               rect = TRUE, 
+               label_cols = color_palette$col,
+               k_colors = rep("black",3)))
 
 dev.off()
 

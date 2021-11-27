@@ -9,46 +9,6 @@ library(cowplot)
 
 visium_folder = "./processed_visium/objects/"
 
-sample_dict <- read.table("./markers/visium_annotations_ext.txt",
-                          sep = "\t", header = T)
-
-# Extract useful niches --------------------------------------
-
-atlas_meta <- readRDS("./processed_visium/integration/ps_integrated_slides_niches.rds")[[1]][["annotations"]]
-
-# Niche composition -----------------------------------
-cell_info <- atlas_meta %>%
-  dplyr::group_by(orig.ident, opt_clust_integrated) %>%
-  summarize(ncells = length(opt_clust_integrated)) %>%
-  dplyr::mutate(all_sample_cells = sum(ncells)) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(cell_prop = ncells/all_sample_cells) %>%
-  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
-  mutate(niche = paste0("niche_", opt_clust_integrated))
-
-# Niche composition in matrix
-cell_props <- cell_info %>%
-  dplyr::select(orig.ident, niche, cell_prop) %>%
-  pivot_wider(values_from = cell_prop,
-              names_from = niche) %>%
-  column_to_rownames(var = "orig.ident") %>%
-  as.data.frame()
-
-cell_props[is.na(cell_props)] <- 0
-
-head(cell_props)
-dim(cell_props)
-
-# Sort them as in the meta-dictionary
-cell_props <- cell_props[sample_dict$sample_id,]
-rownames(cell_props) <- sample_dict$pid
-
-#Not all niches are informative for patient comparison(these are structures that are specific to a patient, noise, etc)
-# So let's cut all the niches that aren't particularly present in 5 samples (minimum patient group size)
-niche_filter <- colSums(cell_props > 0.01) >= 5
-cell_props <- cell_props[, niche_filter]
-niche_filter <- colnames(cell_props)
-
 # Get visium slides --------------------------------
 visium_files <- list.files(visium_folder, full.names = F)
 visium_samples <- gsub("[.]rds", "", visium_files)
@@ -64,7 +24,7 @@ plot_all_niches = function(visium_file, sample_name, cluster_list) {
   
   visium_slide <- readRDS(visium_file)
   
-  visium_slide <- subset(visium_slide, opt_clust_integrated %in% cluster_list)
+  cluster_list <- unique(visium_slide$opt_clust_integrated)
   
   Idents(visium_slide) <- "opt_clust_integrated"
 
@@ -107,12 +67,7 @@ plot_all_niches = function(visium_file, sample_name, cluster_list) {
   
 }
 
-
 all_plts <- pwalk(visium_df, plot_all_niches, cluster_list = niche_filter)
-
-
-# We load the slide meta-sata and map it
-
 
 
 

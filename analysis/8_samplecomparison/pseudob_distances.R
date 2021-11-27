@@ -45,10 +45,11 @@ cell_props <- atlas_meta %>%
 col_meta <- colData(pseudobulk_data) %>%
   as.data.frame() %>% 
   dplyr::select(-ncells) %>%
+  mutate(max_counts = colMaxs(assay(pseudobulk_data))) %>%
   left_join(patient_cells, by = c("patient_id","cell_type")) %>%
   left_join(cell_props, by = c("patient_id", "cell_type"))
 
-high_perc_cells <- which(col_meta$ncells > 50)
+high_perc_cells <- which((col_meta$ncells > 10) & (col_meta$max_counts > 1000))
 col_meta <- col_meta[high_perc_cells, ]
 pseudobulk_data <- pseudobulk_data[, high_perc_cells]
 
@@ -68,8 +69,8 @@ cell_type_divergences <- map(cts, function(ct) {
                   min.total.count = 10)
   
 }) %>% 
-  enframe(name = "cell_type", value = "count_matrix") %>%
-  dplyr::filter(! cell_type %in% c("Mast", "Adipo"))
+  enframe(name = "cell_type", value = "count_matrix") #%>%
+  #dplyr::filter(! cell_type %in% c("Mast", "Adipo"))
 
 saveRDS(cell_type_divergences, "./processed_snrnaseq/integration/psxpat_integrated_rnasamples_filt.rds")
 
@@ -119,12 +120,21 @@ cell_type_divergences <- left_join(cell_type_divergences, cell_props,
                                   cell_prop_A, cell_prop_B))
 
 # Sample divergences ---------------------------------------
-sample_divergences <- cell_type_divergences %>%
-  dplyr::mutate(weighted_jsd = min_prop * jsd) %>%
+ sample_divergences <- cell_type_divergences %>%
+   dplyr::mutate(weighted_jsd = min_prop * jsd) %>%
+   group_by(SampleA, SampleB) %>%
+   summarize(patient_jsd = sum(weighted_jsd)) %>%
+   pivot_wider(names_from = SampleA,
+               values_from = patient_jsd)
+
+sample_divergences_transcript <- cell_type_divergences %>%
+  dplyr::mutate(weighted_jsd = jsd) %>%
   group_by(SampleA, SampleB) %>%
   summarize(patient_jsd = sum(weighted_jsd)) %>%
   pivot_wider(names_from = SampleA,
               values_from = patient_jsd)
+
+write_csv(sample_divergences_transcript, "results/sample_comparison/gex/sample_divergences_sumallcells.csv")
 
 # Multidimensional scaling using JSD distances
 get_JSD_mds <- function(divergences) {
@@ -142,6 +152,28 @@ get_JSD_mds <- function(divergences) {
 
 # MDS of complete profile -----------------------------------------
 mds_samples_all <- get_JSD_mds(sample_divergences)
+
+# Clustering based on these distances -----------------------------
+
+sample_divergences_mat <- sample_divergences_transcript %>%
+  column_to_rownames("SampleB") %>%
+  as.matrix() %>%
+  as.dist()
+
+gex_hclust <- eclust(sample_divergences_mat, "hclust", k = 3)
+
+color_palette <- tibble(patient_id = gex_hclust$labels[gex_hclust$order]) %>%
+  left_join(sample_dict[,c("patient_group", "patient_id")] %>% unique()) %>%
+  left_join(tibble(patient_group = c("group_1", "group_2", "group_3"),
+                   col = c("red", "darkgreen", "blue")))
+
+pdf("results/sample_comparison/gex/sample_divergences_hclust.pdf")
+plot(fviz_dend(gex_hclust, 
+               rect = TRUE, 
+               label_cols = color_palette$col,
+               k_colors = rep("black",3)))
+dev.off()
+# Continue with MDS
 
 all_jsd_plt <- ggplot(mds_samples_all, aes(x = V1,
                                            y = V2,
@@ -179,7 +211,7 @@ cell_type_divergences <- cell_type_divergences %>%
 JSD_plts = cowplot::plot_grid(plotlist = c(all_jsd_plt,cell_type_divergences$mds_plts),
                      nrow = 3, ncol = 4, align = "hv")
 
-pdf(file = "results/sample_comparison/JSD_distances.pdf", width = 7, height = 5)
+pdf(file = "results/sample_comparison/gex/JSD_distances.pdf", width = 7, height = 5)
 plot(all_jsd_plt)
 walk(cell_type_divergences$mds_plts, plot)
 dev.off()

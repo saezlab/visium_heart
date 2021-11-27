@@ -22,6 +22,8 @@ run_misty_seurat <- function(visium.slide,
                              # folder name for output
 ) {
   
+  mistyR::clear_cache()
+  
   # Extracting geometry
   geometry <- GetTissueCoordinates(visium.slide,
                                    cols = c("row", "col"), scale = NULL
@@ -78,6 +80,8 @@ create_default_views <- function(data,
                                  view.name,
                                  spot.ids,
                                  geometry) {
+  
+  mistyR::clear_cache()
   
   view.data.init <- create_initial_view(data)
   

@@ -216,7 +216,6 @@ get_mlm_score <- function(visium_slide,
                             assay = "SCT",
                             module_name = "user_gsets") {
   
-  
   gset_mat <- run_mlm(network = network,
                         mat = GetAssayData(visium_slide, assay = assay),
                         .source = "source",
@@ -236,3 +235,27 @@ get_mlm_score <- function(visium_slide,
   return(visium_slide)
 }
 
+get_ulm_score <- function(visium_slide, 
+                          network,
+                          assay = "SCT",
+                          module_name = "user_gsets") {
+  
+  
+  gset_mat <- run_ulm(network = network,
+                      mat = GetAssayData(visium_slide, assay = assay),
+                      .source = "source",
+                      .target = "target",
+                      .mor = "mor",
+                      center = F,
+                      .likelihood = "likelihood")
+  
+  gset_mat <- gset_mat %>% 
+    dplyr::select(-c("statistic","p_value")) %>%
+    pivot_wider(names_from = condition, values_from = score) %>%
+    column_to_rownames("source") %>%
+    as.matrix()
+  
+  visium_slide[[module_name]] <- CreateAssayObject(data = gset_mat)
+  
+  return(visium_slide)
+}

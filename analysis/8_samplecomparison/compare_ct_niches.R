@@ -4,6 +4,8 @@
 #' This calculates the differences of niche composition between patient groups
 library(tidyverse)
 library(Seurat)
+library(compositions)
+library(factoextra)
 
 cluster_counts <- read_csv(file = "./results/niche_mapping/ct_niches/niche_prop_summary.csv")
 niche_summary_pat <- read_table2(file = "./results/niche_mapping/ct_niches/niche_summary_pat.txt")
@@ -16,7 +18,6 @@ cluster_info <- cluster_info %>%
   dplyr::select(-niche) %>%
   left_join(patient_info)
   
-
 patient_group_inf <- patient_info %>%
   dplyr::select(patient_id, patient_group) %>%
   unique()
@@ -169,12 +170,16 @@ selected_niches <- niche_test_kw %>%
   dplyr::filter(corr_pval <= .1) %>%
   pull(ct_niche)
 
+complete_niche_info %>%
+  write_csv("./results/sample_comparison/niche/patient_niche_comps.csv")
+
 pdf("./results/sample_comparison/niche/kw_ct_niches_patients.pdf", height = 3, width = 5)
 
 complete_niche_info %>%
   dplyr::filter(ct_niche %in% selected_niches) %>%
   ggplot(aes(x = patient_group, y = cell_prop, fill = patient_group)) +
   geom_boxplot() +
+  geom_point() +
   theme_classic() +
   theme(axis.text = element_text(size = 10),
         axis.text.x = element_text(angle = 90)) +
@@ -182,6 +187,41 @@ complete_niche_info %>%
   ylab("niche proportion")
 
 dev.off()
+
+# Clustering by compositions....
+# Final test, show that relationship between these states separate groups
+complete_niche_info_mat <- complete_niche_info %>%
+  #dplyr::filter(patient_id %in% high_qc_pats) %>%
+  dplyr::select(-patient_group) %>%
+  pivot_wider(names_from = ct_niche, values_from = cell_prop) %>%
+  as.data.frame() %>%
+  column_to_rownames("patient_id") %>%
+  as.matrix()
+
+# Generate ILR transformation
+baseILR <- ilrBase(x = complete_niche_info_mat,
+                   method = "basic")
+cell_ilr <- as.matrix(ilr(complete_niche_info_mat, baseILR))
+colnames(cell_ilr) <- paste0("ILR_", 1:ncol(cell_ilr))
+
+gex_hclust <- eclust(cell_ilr, "hclust", k = 3)
+
+# Make color palette
+
+color_palette <- tibble(patient_id = gex_hclust$labels[gex_hclust$order]) %>%
+  left_join(patient_info[,c("patient_group", "patient_id")] %>% unique()) %>%
+  left_join(tibble(patient_group = c("group_1", "group_2", "group_3"),
+                   col = c("red", "darkgreen", "blue")))
+
+pdf("./results/sample_comparison/niche/niche_patient_clustering.pdf", height = 6, width = 5)
+
+plot(fviz_dend(gex_hclust, 
+               rect = TRUE, 
+               label_cols = color_palette$col,
+               k_colors = rep("black",3)))
+
+dev.off()
+
 
 # Rest of the figures
 
@@ -234,6 +274,7 @@ walk(selected_slides$sample_id, function(slide_f) {
 })
 
 dev.off()
+
 
 
 

@@ -3,45 +3,65 @@
 
 #' Correlate cell2location results from all slides
 #' 
-library(Seurat)
 library(tidyverse)
 library(ComplexHeatmap)
 
+c2l_folder <- "./results/deconvolution_models/location_models/density_tables_rds/"
 
-# Import path pointers
+# Get cell2location files --------------------------------
+c2l_files <- list.files(c2l_folder, full.names = F)
 
-# Get individual slide info ---------------------------------------------
-visium_folder = "./processed_visium/objects/"
-visium_files <- list.files(visium_folder, full.names = F)
-visium_samples <- gsub("[.]rds", "", visium_files)
+c2l_samples <- map_chr(strsplit(c2l_files,".rds"), 
+                       ~ .x[1])
 
-visium_df <- tibble(visium_file = paste0(visium_folder, 
-                                         visium_files),
-                    sample = visium_samples) %>%
-  mutate()
+c2l_df <- tibble(c2l_file = paste0(c2l_folder, 
+                                   c2l_files),
+                 sample = c2l_samples) 
 
-
-# First for each slide we will create metavariables that flag the location of a cell-type in a spot
-
-c2l_assay <- "c2l_props"
-
-cell_props <- map(visium_df$visium_file, function(visium_file) {
-  
-  print(visium_file)
-  
-  slide <- readRDS(visium_file)
-  cell_props <- GetAssayData(slide, assay = c2l_assay) %>% t()
-  
+# Generates list of matrix of c2l results
+list_matrices <- map2(c2l_df$c2l_file, c2l_df$sample, function(f, s) {
+  mat <- readRDS(f)
+  rownames(mat) <- paste0(s, "..", rownames(mat))
+  prop_mat <- base::apply(mat, 1, function(x) {
+    
+    x/sum(x)
+    
   })
+  
+  return(t(prop_mat))
+})
 
-names(cell_props) <- paste0("sample", visium_df$sample)
+integrated_compositions <- reduce(list_matrices, rbind) 
 
-cell_props <- purrr::reduce(cell_props, rbind)
+cor_mat <- cor(integrated_compositions)
+cor_mat_order <- hclust(as.dist(1-cor_mat))
+cor_mat_order <- cor_mat_order$labels[cor_mat_order$order]
 
-cor_mat <- cor(cell_props,method = "spearman")
+cor_mat <- cor_mat[cor_mat_order,cor_mat_order]
 
-pdf("./results/tissue_structure/colocalization/c2l_props_correlation.pdf", height = 7, width = 8)
-plot(Heatmap(cor_mat))
+cor_mat[lower.tri(cor_mat,diag = T)] <- NA
+
+cor_plt_dat <- cor_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("cell_a") %>%
+  pivot_longer(-cell_a, values_to = "p_corr", names_to = "cell_b") %>%
+  na.omit() %>%
+  dplyr::mutate(cell_a = factor(cell_a,
+                                levels = cor_mat_order),
+                cell_b = factor(cell_b,
+                                levels = cor_mat_order))
+
+
+cor_plt <- ggplot(cor_plt_dat, aes(x = cell_a, y = cell_b, fill = p_corr)) +
+  geom_tile() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5),
+        axis.text = element_text(size = 12)) +
+  scale_fill_gradient2() +
+  coord_equal()
+
+pdf("./results/tissue_structure/colocalization/c2l_correlation.pdf", height = 4, width = 5)
+
+plot(cor_plt)
+
 dev.off()
-
-

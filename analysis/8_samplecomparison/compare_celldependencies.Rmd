@@ -12,6 +12,7 @@ library(tidyverse)
 library(cowplot)
 library(mistyR)
 library(uwot)
+library(factoextra)
 ```
 
 ## Introduction
@@ -42,22 +43,111 @@ sample_importances <- sample_importances %>%
   left_join(sample_dict, by = c("name" = "sample_id"))
 ```
 
-# RUN PCA + UMAP on importances
+## Transform to patient specific importances
 
 ```{r}
-sample_importances_mat <- sample_importances %>%
+pat_importances <- sample_importances %>%
+  group_by(view, Predictor, Target, patient_id) %>%
+  summarise(Importance = mean(Importance))
+```
+
+## Generate the matrix for clustering and UMAP
+
+First of all data
+
+```{r}
+pat_importances_mat <- pat_importances %>%
+  ungroup() %>%
   #dplyr::filter(view == "intra") %>%
   dplyr::mutate(int_id = paste0(view,"..",Predictor,"_to_",Target)) %>%
-  dplyr::select(name, int_id, Importance) %>%
+  dplyr::select(patient_id, int_id, Importance) %>%
   pivot_wider(names_from = int_id, values_from = Importance) %>%
-  column_to_rownames("name") %>%
+  column_to_rownames("patient_id") %>%
   as.matrix()
+
+write_csv(as.data.frame(pat_importances_mat), 
+          file = "./results/tissue_structure/colocalization/misty_importances_ct_bypat.csv")
+```
+
+Generate clustering as in other analysis
+
+Ward with Eucledian
+
+```{r}
+imp_hclust <- eclust(pat_importances_mat, "hclust", k = 3)
+
+color_palette <- tibble(patient_id = imp_hclust$labels[imp_hclust$order]) %>%
+  left_join(sample_dict[,c("patient_group", "patient_id")] %>% unique()) %>%
+  left_join(tibble(patient_group = c("group_1", "group_2", "group_3"),
+                   col = c("red", "darkgreen", "blue")))
+
+allviews_clust <- fviz_dend(imp_hclust, 
+               rect = TRUE, 
+               label_cols = color_palette$col,
+               k_colors = rep("black",3),
+               main = "all_views")
+
+pdf("./results/tissue_structure/colocalization/misty_ct_importances.pdf", height = 7, width = 5)
+plot(allviews_clust)
+dev.off()
+
+plot(allviews_clust)
+```
+
+Separate the analysis for each view
+
+```{r}
+view_pat_importances_mat <- pat_importances %>%
+  ungroup() %>%
+  group_by(view) %>%
+  nest() %>%
+  mutate(data = map(data, function(dat) {
+    
+    dat %>%
+      dplyr::mutate(int_id = paste0(view,"..",Predictor,"_to_",Target)) %>%
+      dplyr::select(patient_id, int_id, Importance) %>%
+      pivot_wider(names_from = int_id, values_from = Importance) %>%
+      column_to_rownames("patient_id") %>%
+      as.matrix()
+    
+  }))
+  #dplyr::filter(view == "intra") %>%
+```
+
+Cluster per view
+
+```{r}
+view_pat_importances_mat <- view_pat_importances_mat %>%
+  mutate(cluster_tree = map2(view, data, function(v, dat) {
+    
+    
+imp_hclust <- eclust(dat, "hclust", k = 3)
+
+color_palette <- tibble(patient_id = imp_hclust$labels[imp_hclust$order]) %>%
+  left_join(sample_dict[,c("patient_group", "patient_id")] %>% unique()) %>%
+  left_join(tibble(patient_group = c("group_1", "group_2", "group_3"),
+                   col = c("red", "darkgreen", "blue")))
+fviz_dend(imp_hclust, 
+               rect = TRUE, 
+               label_cols = color_palette$col,
+               k_colors = rep("black",3),type = "rectangle", main = v)
+    
+  }))
+
+walk(view_pat_importances_mat$cluster_tree, plot)
+
+pdf("./results/tissue_structure/colocalization/misty_ct_importances_clustbyview.pdf", height = 9, width = 5)
+
+walk(view_pat_importances_mat$cluster_tree, plot)
+
+dev.off()
+
 ```
 
 We perform a PCA on the scaled importances
 
 ```{r}
-ilr_pcs_res <- prcomp(x = sample_importances_mat)
+ilr_pcs_res <- prcomp(x = pat_importances_mat)
 ilr_pcs <- ilr_pcs_res$x %>%
   as.data.frame() %>%
   rownames_to_column("orig.ident")
@@ -65,10 +155,12 @@ ilr_pcs <- ilr_pcs_res$x %>%
 
 ```{r}
 ilr_pcs %>%
-left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+left_join(sample_dict %>% 
+            dplyr::select(patient_group, patient_id) %>%
+            unique(), by = c("orig.ident" = "patient_id")) %>%
   ggplot(aes(x = PC1, y = PC2, 
              color = patient_group, 
-             label = patient_id)) +
+             label = orig.ident)) +
       geom_point(size = 1) +
       ggrepel::geom_text_repel() +
       theme_classic()
@@ -95,20 +187,22 @@ tibble("prop_sd" = prop_sd,
 Finally, we project the pseudobulk profiles in the UMAP and define three groups of patients from the hierarchical clustering of the expression profiles of all samples
 
 ```{r}
-gex_umap <- umap(sample_importances_mat, 
+gex_umap <- umap(pat_importances_mat, 
                  n_neighbors = 5, 
                  n_epochs = 1000,
                  metric = "cosine") %>%
   as.data.frame() %>%
-  mutate(orig.ident = rownames(sample_importances_mat))
+  mutate(orig.ident = rownames(pat_importances_mat))
 ```
 
 ```{r, fig.height=5, fig.width=7}
 umap_plt <- gex_umap %>%
-  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  left_join(sample_dict %>% 
+            dplyr::select(patient_group, patient_id) %>%
+            unique(), by = c("orig.ident" = "patient_id")) %>%
   ggplot(aes(x = V1, y = V2, 
              color = patient_group, 
-             label = patient_id)) +
+             label = orig.ident)) +
       geom_point(size = 1) +
       ggrepel::geom_text_repel() +
       theme_classic() +
@@ -119,6 +213,13 @@ plot(umap_plt)
 ```
 
 ```{r}
+gex_umap %>%
+  left_join(sample_dict %>% 
+            dplyr::select(patient_group, patient_id) %>%
+            unique(), by = c("orig.ident" = "patient_id")) %>%
+  write_csv(., file = "./results/sample_comparison/spatial/misty_importances_umap.csv")
+
+
 pdf("./results/sample_comparison/spatial/misty_importances_umap.pdf",width = 5, height = 4.5)
 plot(umap_plt)
 dev.off()
@@ -126,6 +227,36 @@ dev.off()
 
 Then we test the importances that are higher in one group vs the other:
 We are correcting first by cell-cell importance 
+
+## Get R performance
+
+```{r}
+misty_res <- collect_results(paste0(misty_out_folder, misty_outs))
+
+R2_data <- misty_res$improvements %>%
+  dplyr::filter(measure == "multi.R2") %>%
+  dplyr::mutate(sample = gsub("_c2l", "", sample) %>%
+                  strsplit(.,split = "cm_") %>%
+                  map_chr(., ~ last(.x))) %>%
+  dplyr::left_join(sample_dict, by = c("sample" = "sample_id")) %>%
+  rename("R2" = value)
+
+filt_predictors <- R2_data %>%
+  dplyr::select(target, sample, R2) %>%
+  dplyr::filter(R2 >= 0.15) %>%
+  dplyr::mutate(keep = TRUE) %>%
+  dplyr::select(target,sample,keep)
+```
+
+## Filter 
+
+```{r}
+sample_importances_filt <- sample_importances %>%
+  left_join(filt_predictors, by = c("Target" = "target",
+                                    "name" = "sample")) %>%
+  na.omit()
+```
+
 
 ```{r, warning=F}
 run_wilcox_all <- function(prop_data) {
@@ -151,9 +282,23 @@ run_wilcox_all <- function(prop_data) {
   
 }
 
-# Here we identify interactions that are important ( > 0, > 1)
-# Then test in which patient group they are larger
-cell_interaction_comp <- sample_importances %>%
+```
+
+```{r}
+
+# Here we identify interactions that are important ( > 1)
+# We will only test view/predictor/target in which the 
+# median of one group is larger than 1 (to reduce tests)
+
+# You want to keep then all interactions that 
+# were significant but at the same time that have a relevant importance in general
+
+summarize_int_comparison <- function(corr_pval_filt, corr_pval_text, max_median_imp_filt =  1, 
+                                     sample_importances,
+                                     patient_group_filt = c("group_1", "group_2", "group_3")) {
+  
+  cell_interaction_comp <- sample_importances %>%
+  dplyr::filter(patient_group %in% patient_group_filt) %>%
   group_by(view, Predictor, Target) %>%
   nest() %>%
   mutate(max_median_imp = map(data, function(dat) {
@@ -166,7 +311,7 @@ cell_interaction_comp <- sample_importances %>%
     
   })) %>%
   unnest(max_median_imp) %>%
-  dplyr::filter(max_median_imp >= 1) %>%
+  dplyr::filter(max_median_imp >= max_median_imp_filt) %>%
   mutate(wres = map(data, run_wilcox_all)) %>%
   #select(wres) %>%
   unnest(wres) %>%
@@ -175,43 +320,12 @@ cell_interaction_comp <- sample_importances %>%
   mutate(corr_pval = p.adjust(p.value)) %>%
   ungroup()
   
-```
-
-```{r}
-all_sign_ints <- cell_interaction_comp %>%
-  dplyr::mutate(changing_int = ifelse(corr_pval <= 0.25, TRUE, FALSE)) %>%
-  group_by(Predictor, Target) %>%
-  dplyr::mutate(n_sign = sum(changing_int)) %>%
-  dplyr::filter(n_sign > 0) %>%
+  all_sign_ints <- cell_interaction_comp %>%
+  dplyr::filter(corr_pval <= corr_pval_filt) %>%
   ungroup() %>%
   dplyr::mutate(int_id = paste0(Predictor, "_to_", Target)) %>%
-  dplyr::select(view, data, Predictor, Target, patient_group, corr_pval, int_id) %>%
-  mutate(pval_text = ifelse(corr_pval <= 0.25, "*", ""))
-
-all_sign_ints <- cell_interaction_comp %>%
-  dplyr::filter(corr_pval <= 0.25) %>%
-  ungroup() %>%
-  dplyr::mutate(int_id = paste0(Predictor, "_to_", Target)) %>%
-  dplyr::select(view, data, Predictor, Target, patient_group, corr_pval, int_id) %>%
-  mutate(pval_text = ifelse(corr_pval <= 0.25, "*", ""))
-
-max_importance <- all_sign_ints %>%
-  dplyr::select(view, data, Predictor, Target) %>%
-  unique() %>%
-  mutate(max_median_imp = map(data, function(dat) {
-    
-    dat %>% 
-      group_by(patient_group) %>%
-      summarize(med_importance = median(Importance)) %>%
-      dplyr::filter(med_importance == max(med_importance)) %>%
-      pull(med_importance)
-    
-  })) %>%
-  unnest(max_median_imp) %>%
-  dplyr::select(-data)
-
-all_sign_ints <- all_sign_ints %>%
-  left_join(max_importance, by = c("view", "Predictor", "Target")) %>%
+  dplyr::select(view, data, Predictor, Target, patient_group, corr_pval, int_id, max_median_imp) %>%
+  mutate(pval_text = ifelse(corr_pval <= corr_pval_text, "*", "")) %>%
   group_by(Predictor, Target) %>%
   mutate(ref_imp = max(max_median_imp)) %>%
   dplyr::filter(ref_imp > 0)
@@ -220,13 +334,6 @@ lab_order <- all_sign_ints %>%
   arrange(patient_group, int_id) %>%
   pull(int_id) %>% unique()
 
-write.table(all_sign_ints %>%
-              dplyr::select(-data),
-            "./results/sample_comparison/spatial/sign_interaction_changes.txt", 
-            sep = "\t",col.names = T, row.names = F, quote = F)
-```
-
-```{r, fig.height=5, fig.width=5}
 imprt_plot <- all_sign_ints %>%
   dplyr::select(-data) %>%
   mutate(int_id = factor(int_id,
@@ -243,26 +350,63 @@ imprt_plot <- all_sign_ints %>%
   facet_wrap(.~view, ncol = 3) +
   ylab("Model interaction") +
   scale_fill_gradient(na.value = "white")
-
-plot(imprt_plot)
+ 
+ return(list("data" = all_sign_ints, "plot" = imprt_plot)) 
+  
+}
 ```
+
+## Healthy and FZ
 
 ```{r}
-pdf("./results/sample_comparison/spatial/sign_interaction_changes.pdf", height = 5, width = 5)
-plot(imprt_plot)
-dev.off()
+
+healthy_vs_fz <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.05,
+                                          max_median_imp_filt = 1,
+                                          sample_importances = sample_importances,
+                                          patient_group_filt = c("group_1", "group_3"))
+
+healthy_vs_iz <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.05,
+                                          max_median_imp_filt = 1,
+                                          sample_importances = sample_importances,
+                                          patient_group_filt = c("group_1", "group_2"))
+
+fz_vs_iz <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.05,
+                                          max_median_imp_filt = 1,
+                                          sample_importances = sample_importances,
+                                          patient_group_filt = c("group_2", "group_3"))
+
+all <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.05,
+                                          max_median_imp_filt = 1,
+                                          sample_importances = sample_importances,
+                                          patient_group_filt = c("group_1", "group_2", "group_3"))
+
 ```
+
 
 ```{r}
-all_sign_ints %>%
-  dplyr::filter(int_id == "Endo_to_CM") %>%
-  dplyr::select(view, data, Predictor, Target) %>%
-  unique() %>%
-  unnest() %>%
-  ggplot(aes(x = patient_group, 
-             y = Importance)) +
-  geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-  facet_wrap(.~view, ncol = 3)
-```
 
+all_comps <- list("healthy_vs_fz" = healthy_vs_fz, 
+     "healthy_vs_iz" = healthy_vs_iz,
+     "fz_vs_iz" = fz_vs_iz, 
+     "all" = all) %>%
+  enframe()
+
+walk2(all_comps$name, all_comps$value, function(tag, l) {
+  
+  pdf(paste0("./results/sample_comparison/spatial/sign_interaction_changes_",
+             tag,".pdf"), height = 5, width = 5)
+  
+  plot(l[["plot"]])
+  
+  dev.off()
+  
+  write_csv(l[["data"]], paste0("./results/sample_comparison/spatial/sign_interaction_changes_",
+             tag,".csv"))
+  
+})
+
+```

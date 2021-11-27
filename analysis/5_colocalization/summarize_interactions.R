@@ -115,7 +115,6 @@ dev.off()
 summarized_interactions %>% unnest() %>% write_csv(., file = "./results/tissue_structure/colocalization/misty_importances_ct.csv")
 
 
-
 # What if we use the mean?
 
 misty_res <- collect_results(paste0(misty_out_folder, misty_outs))
@@ -127,113 +126,30 @@ mistyR::plot_view_contributions(misty_res)
 
 dev.off()
 
+# Let's separate importances by different conditions and views
 
-# Now we check some examples
-
-# Example plots
-
-get_spat_contxt_plots <- function(visium_file, pdf_file, cells) {
-  
-  visium_slide <- readRDS(visium_file)
-  
-  geometry <- GetTissueCoordinates(visium_slide,
-                                   cols = c("row", "col"), 
-                                   scale = NULL)
-  
-  data <- extract_seurat_data(visium.slide = visium_slide,
-                              assay = "c2l",
-                              geometry = geometry)
-  
-  #Juxta
-  
-  juxta_assay <- create_default_views(data = data,
-                                      view.type = "juxta",
-                                      view.param = 5,
-                                      view.name = "juxta_c2l",
-                                      spot.ids = rownames(data),
-                                      geometry = geometry)
-  
-  juxta_assay <- juxta_assay$juxta_c2l_5$data %>%
-    as.matrix()
-  
-  rownames(juxta_assay) <- rownames(data)
-  
-  visium_slide[["c2l_juxta"]] <- CreateAssayObject(data = t(juxta_assay))
-  
-  #Para
-  
-  para_assay <- create_default_views(data = data,
-                                     view.type = "para",
-                                     view.param = 15,
-                                     view.name = "para_c2l",
-                                     spot.ids = rownames(data),
-                                     geometry = geometry)
-  
-  para_assay <- para_assay$para_c2l_15$data %>%
-    as.matrix()
-  
-  rownames(para_assay) <- rownames(data)
-  
-  visium_slide[["c2l_para"]] <- CreateAssayObject(data = t(para_assay))
-  
-  # Plots
-  
-  DefaultAssay(visium_slide) <- "c2l"
-  
-  intra <- SpatialFeaturePlot(visium_slide, features = cells)
-  
-  DefaultAssay(visium_slide) <- "c2l_juxta"
-  
-  juxta <- SpatialFeaturePlot(visium_slide, features = cells)
-  
-  DefaultAssay(visium_slide) <- "c2l_para"
-  
-  para <- SpatialFeaturePlot(visium_slide, features = cells)
-  
-  pdf(file = pdf_file, height = 4, width = 12)
-  
-  plot(intra)
-  plot(juxta)
-  plot(para)
-  
-  dev.off()
-  
-  return(NULL)
-  
-}
-
-# CM - PC
-
-misty_res$improvements %>%
-  dplyr::filter(target %in% c("PC", "CM"),
-                measure == "multi.R2") %>%
-  arrange(target, -value) %>%
-  group_by(target) %>%
-  slice(1:5)
-
-# vSMCs
-
-misty_res$improvements %>%
-  dplyr::filter(target %in% c("vSMCs"),
-                measure == "multi.R2") %>%
-  arrange(target, -value) %>%
-  group_by(target) %>%
-  slice(1:10)
+summarized_interactions_group <- sample_importances %>%
+  group_by(view, Predictor, Target, patient_group) %>%
+  summarize(median_importance = median(Importance)) %>%
+  ungroup() %>%
+  group_by(view)
 
 
+write_csv(summarized_interactions_group, file = "./results/tissue_structure/colocalization/misty_importances_ct_bygroups.csv")
 
-get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_16_CK294.rds",
-                      pdf_file = "./results/tissue_structure/misty/figure_examples/cm_Visium_16_CK294_cardio.pdf",
-                      cells = c("PC", "CM", "Adipo"))
+summarized_interactions_group_plt <- summarized_interactions_group %>%
+  ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "blue", 
+                       midpoint = 0,
+                       low = "white",
+                       na.value = "grey") +
+  #ggplot2::coord_equal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(view ~ patient_group, scales = "free") 
 
-get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_16_CK294.rds",
-                      pdf_file = "./results/tissue_structure/misty/figure_examples/Visium_16_CK294_fibro.pdf",
-                      cells = c("Fib", "Myeloid", "CM"))
+pdf("./results/tissue_structure/colocalization/misty_importances_ct_bygroups.pdf")
 
-get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_15_CK293.rds",
-                      pdf_file = "./results/tissue_structure/misty/figure_examples/Visium_15_CK293_vsmcs.pdf",
-                      cells = c("vSMCs", "Endo"))
+plot(summarized_interactions_group_plt)
 
-get_spat_contxt_plots(visium_file = "./processed_visium/objects/Visium_3_CK281.rds",
-                      pdf_file = "./results/tissue_structure/misty/figure_examples/Visium_3_CK281_vsmcs.pdf",
-                      cells = c("vSMCs", "Endo"))
+dev.off()
