@@ -117,6 +117,7 @@ misty_outs <- map(slide_files, function(slide_file){
 
 misty_outs <- list.dirs("./results/tissue_structure/misty/pathway_map",full.names = T,recursive = F)
 misty_res <- collect_results(misty_outs)
+pat_ann <- readRDS("./markers/visium_patient_anns_revisions.rds")
 
 pdf("./results/tissue_structure/misty_modelperf_progeny_ct.pdf", height = 6, width = 6)
 
@@ -130,6 +131,50 @@ mistyR::plot_interaction_heatmap(misty_res, "para_ct_15", cutoff = 0)
 
 dev.off()
 
+# First let's evaluate the performance
+
+R2_data <- misty_res$improvements %>%
+  dplyr::filter(measure == "multi.R2") %>%
+  dplyr::mutate(sample = gsub("_progeny", "", sample) %>%
+                  strsplit(.,split = "pm_") %>%
+                  map_chr(., ~ last(.x))) %>%
+  dplyr::left_join(pat_ann, by = c("sample" = "sample_id")) %>%
+  rename("R2" = value)
+
+path_order <- R2_data %>% 
+  group_by(target) %>%
+  summarize(med_value = median(R2)) %>%
+  arrange(-med_value) %>%
+  pull(target)
+
+path_R2_tile <- ggplot(R2_data, aes(x = factor(target,
+                                                levels = path_order), 
+                                     y = sample, fill = R2)) +
+  geom_tile() +
+  coord_equal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+paths_R2_box <- ggplot(R2_data, aes(x = factor(target,
+                                               levels = path_order), y = R2)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+paths_R2_box_by_group <- ggplot(R2_data, aes(x = patient_group, y = R2)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(.~target)
+
+pdf("./results/tissue_structure/misty_modelperf_progeny_ct_R2.pdf", height = 6, width = 6)
+
+plot(path_R2_tile)
+plot(paths_R2_box)
+plot(paths_R2_box_by_group)
+write_csv(R2_data, "./results/tissue_structure/misty_modelperf_progeny_ct_R2.csv")
+
+dev.off()
+
+# Generate an overall/description
+
 median_importances <- misty_res$importances %>%
   group_by(view, Predictor, Target) %>%
   summarize(median_importance = median(Importance)) %>%
@@ -140,8 +185,6 @@ median_importances <- misty_res$importances %>%
 median_importances %>% 
   unnest() %>%
   write_csv(., file = "./results/tissue_structure/misty_modelperf_progeny_ct_median.csv")
-
-
 
 # Some plotting and manipulation functions
 
@@ -228,11 +271,37 @@ walk2(median_importances$view, median_importances$data, function(v, dat) {
 
 dev.off()
 
+# Separate importances by view/group
+
+all_importances <- misty_res$importances %>%
+  dplyr::mutate(sample = gsub("_progeny", "", sample) %>%
+                  strsplit(.,split = "pm_") %>%
+                  map_chr(., ~ last(.x)))%>%
+  dplyr::left_join(pat_ann, by = c("sample" = "sample_id"))
+
+summarized_interactions_group <- all_importances %>%
+  group_by(view, Predictor, Target, patient_group) %>%
+  summarize(median_importance = median(Importance)) %>%
+  ungroup() %>%
+  group_by(view)
+
+write_csv(summarized_interactions_group, file = "./results/tissue_structure/misty_modelperf_progeny_ct_median_bygroup.csv")
+
+summarized_interactions_group_plt <- summarized_interactions_group %>%
+  ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "blue", 
+                       midpoint = 0,
+                       low = "white",
+                       na.value = "grey") +
+  #ggplot2::coord_equal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(view ~ patient_group, scales = "free",ncol = 3) 
 
 
+pdf("./results/tissue_structure/misty_modelperf_progeny_ct_median_bygroup.pdf", height = 15, width = 10)
 
+plot(summarized_interactions_group_plt)
 
-
-
-
+dev.off()
 
