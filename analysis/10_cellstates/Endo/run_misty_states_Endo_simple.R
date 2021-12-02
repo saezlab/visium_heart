@@ -15,8 +15,53 @@ get_ct_spots <- function(slide, ct) {
   rownames(slide@meta.data)[slide@meta.data[,paste0(ct,"_flag")] == 1]
 }
 
-# Main ------------------------------------------------------------------------
+#This generates a mask of negative scores
+positive_states <- function(slide) {
+  
+  state_mats <- GetAssayData(slide, assay = "cell_states")
+  
+  state_mats[state_mats < 0] <- 0
+  
+  slide[["cell_states"]] <- CreateAssayObject(data = state_mats)
+  
+  return(slide)
+}
 
+#This generates a mask for non-informative spots
+filter_states <- function(slide, prop_thrsh = 0.05) {
+  
+  state_cms <- rownames(GetAssayData(slide, assay = "cell_states")) %>%
+    strsplit(., "-") %>%
+    map_chr(., ~.x[[1]]) %>%
+    unique() %>%
+    set_names()
+  
+  state_mats <- map(state_cms, function(ct) {
+    print(ct)
+    prop_vector <- GetAssayData(slide, assay = "c2l_props")[ct,]
+    #Filter by compositions
+    prop_vector <- ifelse(prop_vector >= prop_thrsh, 1, 0)
+    state_mat <- GetAssayData(slide, assay = "cell_states")
+    ix <-  rownames(state_mat)[grepl(ct, rownames(state_mat))]
+    state_mat <- state_mat[ix, ]
+    
+    apply(state_mat, 1, function(x) {
+      x * prop_vector
+    }) %>%
+      t()
+    
+  })
+  
+  state_mats <- purrr::reduce(state_mats, rbind)
+  
+  slide[["cell_states"]] <- CreateAssayObject(data = state_mats)
+  
+  return(slide)
+}
+
+
+
+# Main ------------------------------------------------------------------------
 # Getting sample annotations --------------------------------------------------
 sample_dict <- readRDS("./markers/visium_patient_anns_revisions.rds")
 slide_files_folder <- "./processed_visium/objects/"
@@ -24,13 +69,12 @@ slide_files <- list.files(slide_files_folder)
 slide_ids <- gsub("[.]rds", "", slide_files)
 
 # Targets
-target_list <- c("Fib-state0","Fib-state1", "Fib-state2", "Fib-state3", "Fib-state4")
-predictors <- c("Myeloid-state0", "Myeloid-state1", "Myeloid-state2", 
-                "Myeloid-state3", "vSMCs-state0", "vSMCs-state1")
+target_list <- c("Endo-state0","Endo-state1", "Endo-state2", "Endo-state3", "Endo-state4")
+predictors <- c("PC-state0", "PC-state1", "PC-state2", "vSMCs-state0", "vSMCs-state1")
 
 # Cell2location scores - complete
 assay_label <- "c2l"
-ct <- "Fib"
+ct <- "Endo"
 
 run_state_ppline <- function(ct, assay_label){
   
@@ -61,34 +105,26 @@ run_state_ppline <- function(ct, assay_label){
     
     # Define assay of each view ---------------
     view_assays <- list("main" = "cell_states",
-                        "intra_cts" = assay_label,
                         "para_states" = "cell_states",
-                        "para_cts" = assay_label,
                         "intra_others" = "cell_states",
                         "para_others" = "cell_states")
     
     # Define features of each view ------------
     view_features <- list("main" = target_list,
-                          "intra_cts" = cts,
                           "para_states" = target_list,
-                          "para_cts" = cts,
                           "intra_others" = predictor_states,
                           "para_others" = predictor_states) #Use all
     
     # Define spatial context of each view -----
     view_types <- list("main" = "intra",
-                       "intra_cts" = "intra",
                        "para_states" = "para",
-                       "para_cts" = "para",
                        "intra_others" = "intra",
                        "para_others" = "para") #Use all
     
     # Define additional parameters (l in case of paraview,
     # n of neighbors in case of juxta) --------
     view_params <- list("main" = NULL,
-                        "intra_cts" = NULL,
                         "para_states" = 15, #Use all
-                        "para_cts" = 15,
                         "intra_others" = NULL,
                         "para_others" = 15) 
     
@@ -126,10 +162,6 @@ run_state_ppline <- function(ct, assay_label){
     
     mistyR::plot_interaction_heatmap(misty_res_slide, "intra", cutoff = 0)
     mistyR::plot_interaction_communities(misty_res_slide, "intra", cutoff = 0.5)
-    
-    mistyR::plot_interaction_heatmap(misty_res_slide, "intra_cts", cutoff = 0)
-    
-    mistyR::plot_interaction_heatmap(misty_res_slide, "para_cts_15", cutoff = 0)
     
     mistyR::plot_interaction_heatmap(misty_res_slide, "para_states_15", cutoff = 0)
     
@@ -200,27 +232,28 @@ performance_all_misty = function(misty_out_folder, r2_filter = 0.1) {
     left_join(cors_filtered, 
               by = c("sample", 
                      "target" = "feature_a"))
-     
   
-  median_importances <- selected_importances %>%
+  
+  mean_importances <- selected_importances %>%
     group_by(target, view, Predictor) %>%
-    summarise(median_imp = median(Importance)) %>%
+    summarise(mean_imp = mean(Importance)) %>%
     ungroup() %>%
     group_by(view) %>%
     nest()
   
-  median_cors <- selected_cors %>%
+  mean_cors <- selected_cors %>%
     group_by(target, feature_b) %>%
-    summarise(median_cor = median(correlation)) %>%
-    ungroup()
+    summarise(mean_cor = mean(correlation)) %>%
+    ungroup() %>%
+    dplyr::filter(target != feature_b)
   
   pdf(file = paste0(misty_out_folder,"/summary_plot_mean.pdf"))
   
-  walk2(median_importances$view, 
-        median_importances$data, function(v, dat){
+  walk2(mean_importances$view, 
+        mean_importances$data, function(v, dat){
           
           imp_plot <- dat %>%
-            ggplot(aes(x = target, y = Predictor, fill = median_imp)) +
+            ggplot(aes(x = target, y = Predictor, fill = mean_imp)) +
             geom_tile() +
             scale_fill_gradient2(high = "#8DA0CB", 
                                  midpoint = 0,
@@ -233,11 +266,14 @@ performance_all_misty = function(misty_out_folder, r2_filter = 0.1) {
           print(imp_plot)
         })
   
-  ggplot(aes(x = target, y = feature_b, fill = median_cor)) +
+  ct_cors_plt <- ggplot(mean_cors, 
+                        aes(x = target, y = feature_b, fill = mean_cor)) +
     geom_tile() +
     scale_fill_gradient2() +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-    ggtitle("Median correlation of \n states in best predictors")
+    ggtitle("Mean correlation of \n states in best predictors")
+  
+  plot(ct_cors_plt)
   
   dev.off()
   
@@ -246,13 +282,19 @@ performance_all_misty = function(misty_out_folder, r2_filter = 0.1) {
   
 }
 
-
-
+# Main
 run_state_ppline(ct = ct,assay_label = assay_label)
-misty_out_folder <- "./results/state_structure/Fib"
+misty_out_folder <- "./results/state_structure/Endo"
+performance_all_misty(misty_out_folder, r2_filter = 0.1)
 
+best_performers <- read_csv("./results/state_structure/Endo/best_performers.csv") %>%
+  left_join(sample_dict, by = c("sample" = "sample_id"))
 
+best_performers %>%
+  ggplot(aes(x = patient_group, y = value)) +
+  geom_boxplot() +
+  facet_wrap(.~target)
 
-
-
-
+best_performers %>%
+  group_by(target, patient_group) %>%
+  summarise(n())

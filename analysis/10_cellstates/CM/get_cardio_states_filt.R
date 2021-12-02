@@ -88,6 +88,34 @@ hca_markers <- read_csv("./ext_data/hca_cardiac_mrkrs.csv") %>%
   dplyr::mutate(data = map(data, ~ .x[[1]])) %>%
   deframe()
 
+major_de <- readRDS("./results/sample_comparison/all_cts_de_analysis.rds") %>%
+  dplyr::filter(cell_type == "CM",
+                FDR <= 0.1,
+                logFC > 0) %>%
+  dplyr::mutate(contrast_id = paste0("down",groupA,"_","up",groupB)) %>%
+  dplyr::arrange(contrast_id, -logFC) %>%
+  group_by(contrast_id) %>%
+  dplyr::slice(1:200) %>%
+  dplyr::select(contrast_id, gene) %>%
+  nest() %>%
+  dplyr::mutate(data = map(data, ~ .x[[1]])) %>%
+  deframe()
+
+major_de_pos <- readRDS("./results/sample_comparison/all_cts_de_analysis.rds") %>%
+  dplyr::filter(cell_type == "CM",
+                FDR <= 0.1,
+                logFC < 0) %>%
+  dplyr::mutate(contrast_id = paste0("down",groupB,"_","up",groupA)) %>%
+  dplyr::arrange(contrast_id, logFC) %>%
+  group_by(contrast_id) %>%
+  dplyr::slice(1:200) %>%
+  dplyr::select(contrast_id, gene) %>%
+  nest() %>%
+  dplyr::mutate(data = map(data, ~ .x[[1]])) %>%
+  deframe()
+
+major_de <- c(major_de, major_de_pos)
+
 # Now enrich with hypergeometric tests
 
 # Function to do enrichment -----------------------------------------------------------------
@@ -101,6 +129,18 @@ label_mapping_plt <- ggplot(label_mapping, aes(x = name,
                                                y = gset, 
                                                size = -log10(corr_p_value))) +
   geom_point()
+
+
+label_mapping_mjr_contrast <- map(mi_markers, GSE_analysis, Annotation_DB = major_de) %>% 
+  enframe() %>%
+  unnest() %>%
+  dplyr::select(name, gset, corr_p_value)
+
+label_mapping_plt <- ggplot(label_mapping_mjr_contrast, aes(x = name, 
+                                               y = gset, 
+                                               size = -log10(corr_p_value))) +
+  geom_point()
+
 
 
 pdf("./results/ct_data_filt/CM/label_mapping_plt.pdf")
