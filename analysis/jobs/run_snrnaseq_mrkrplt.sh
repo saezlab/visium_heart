@@ -1,12 +1,12 @@
 #!/bin/bash
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=02:00:00
-#PBS -l mem=32gb
+#PBS -l mem=150gb
 #PBS -S /bin/bash
 #PBS -N snrnaseq_mrkrs
 #PBS -o /beegfs/work/hd_wh241/MI_revisions/analysis/jobs/run_snrnaseq_mrkrplt.out
 #PBS -e /beegfs/work/hd_wh241/MI_revisions/analysis/jobs/run_snrnaseq_mrkrplt.err
-#PBS -q short
+#PBS -q smp
 #PBS -m bea
 #PBS -M roramirezf@uni-heidelberg.de
 
@@ -15,6 +15,7 @@ conda activate sc_analysis;
 cd /beegfs/work/hd_wh241/MI_revisions;
 
 $CONDA_PREFIX/bin/Rscript ./analysis/1_snuc_QC_doublets_majorannotation/plot_knownmarkers.R \
+        --downsampling \
         --used_assay "RNA" \
         --id_label "opt_clust_integrated" \
         --path "/beegfs/work/hd_wh241/MI_revisions/processed_snrnaseq/integration/integrated_rnasamples.rds" \

@@ -1,7 +1,7 @@
 #!/bin/bash
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=04:00:00
-#PBS -l mem=150gb
+#PBS -l mem=200gb
 #PBS -S /bin/bash
 #PBS -N snrnaseq_int
 #PBS -o /beegfs/work/hd_wh241/MI_revisions/analysis/jobs/run_snrnaseq_integration.out
@@ -19,4 +19,5 @@ $CONDA_PREFIX/bin/Rscript ./analysis/2_snuc_integration_harmony/integrate_object
         --out_file "/beegfs/work/hd_wh241/MI_revisions/processed_snrnaseq/integration/integrated_rnasamples.rds" \
         --out_fig_file "/beegfs/work/hd_wh241/MI_revisions/processed_snrnaseq/integration/integrated_rnasamples.pdf" \
         --def_assay "RNA" \
+        --batch_file "/beegfs/work/hd_wh241/MI_revisions/markers/snrna_batch_ann.csv" \
         --default_resolution 1;

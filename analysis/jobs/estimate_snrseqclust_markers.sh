@@ -1,12 +1,12 @@
 #!/bin/bash
 #PBS -l nodes=1:ppn=8
-#PBS -l walltime=08:00:00
-#PBS -l mem=64gb
+#PBS -l walltime=18:00:00
+#PBS -l mem=150gb
 #PBS -S /bin/bash
 #PBS -N snrnaseq_mrkr_estimation
 #PBS -o /beegfs/work/hd_wh241/MI_revisions/analysis/jobs/estimate_snrseqclust_markers.out
 #PBS -e /beegfs/work/hd_wh241/MI_revisions/analysis/jobs/estimate_snrseqclust_markers.err
-#PBS -q short
+#PBS -q smp
 #PBS -m bea
 #PBS -M roramirezf@uni-heidelberg.de
 
