@@ -14,18 +14,28 @@ misty_outs <- list.files(misty_out_folder, full.names = F)
 misty_outs <- set_names(misty_outs, gsub("cm_", "", misty_outs) %>%
                           gsub("_c2l", "", .))
 
-sample_dict <- readRDS("./markers/visium_patient_anns_revisions.rds")
+# This is the annotation of samples
+annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
+                           patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
 
-# Here we will extract the importances of all views in all samples
-sample_importances <- map(misty_outs, function(x) {
-  misty_res <- collect_results(paste0(misty_out_folder, x))[["importances.aggregated"]]
-})
+sample_dict <- read_csv("./markers/visium_patient_anns_revisions.csv") %>%
+  left_join(annotation_names) %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched")))
 
-sample_importances <- sample_importances %>% 
-  enframe() %>% 
-  unnest() %>%
-  #na.omit() %>%
-  left_join(sample_dict, by = c("name" = "sample_id"))
+# Create a summary of MISTy results to navigate
+
+misty_res <- collect_results(paste0(misty_out_folder, misty_outs))
+
+# Collect all importances
+
+sample_importances <- misty_res$importances %>% 
+  mutate(sample = strsplit(sample, 'cm_') %>%
+           map_chr(., ~.x[[2]]) %>%
+           gsub("_c2l", "", .)) %>%
+  left_join(sample_dict, by = c("sample" = "sample_id"))
 
 # Now, we need to identify the interactions per view and cell that are the most repeated (median)
 
@@ -35,12 +45,35 @@ summarized_interactions <- sample_importances %>%
   ungroup() %>%
   group_by(view)
 
+# Calculate the importance median significance with wilcoxon tests
+
+importance_test <- sample_importances %>%
+  na.omit() %>%
+  dplyr::select(view, Predictor, Target, Importance) %>%
+  group_by(view, Predictor, Target) %>%
+  nest() %>%
+  mutate(wres = map(data, function(dat) {
+    wilcox.test(dat[[1]], y = NULL, mu = 0, alternative = "greater") %>%
+      broom::tidy()
+  })) %>%
+  dplyr::select(wres) %>%
+  unnest() %>%
+  ungroup() %>%
+  mutate(p_adjust = p.adjust(p.value)) %>%
+  mutate("sign_label" = ifelse(p_adjust <= 0.15, "*", ""))
+
+# Add info to summarized interactions
+
+summarized_interactions <- summarized_interactions %>%
+  left_join(importance_test, by = c("view", "Predictor", "Target"))
+
 # This is just data manipulation
 
 get_sample_order <- function(view_importance) {
   
   #Predictors in rows
   view_importance_mat <- view_importance %>%
+    dplyr::select(Predictor, Target, median_importance) %>%
     pivot_wider(names_from = Target, values_from = median_importance, values_fill = 0) %>%
     column_to_rownames("Predictor") %>%
     as.matrix()
@@ -61,14 +94,22 @@ plot_importance <- function(view_importance, cell_order, color_fill = "#8DA0CB")
   view_plt = view_importance %>%
     mutate(Predictor = factor(Predictor, levels =  cell_order$target),
            Target = factor(Target, levels = cell_order$target)) %>%
-    ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
+    ggplot(aes(x = Target, 
+               y = Predictor, 
+               fill = median_importance,
+               label = sign_label)) +
     geom_tile() +
+    geom_text() +
     scale_fill_gradient2(high = color_fill, 
                          midpoint = 0,
                          low = "white",
                          na.value = "grey") +
     ggplot2::coord_equal() +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+          axis.text = element_text(size = 12),
+          axis.title = element_text(size =12),
+          panel.border = element_rect(colour = "black", fill=NA, size=1))
   
   return(view_plt)
 }
@@ -98,26 +139,31 @@ para_importances <- plot_importance((summarized_interactions %>%
                    dplyr::filter(view == "para_15") %>%
                    pull(data))[[1]], 
                 cell_order = cell_order)
-# Panel
 
-importance_panel <- cowplot::plot_grid(intra_importances, 
-                                       juxta_importances, 
-                                       para_importances, 
-                                       align = "hv", ncol = 1, 
-                                       labels = c("intra", "juxta", "para"))
 
-pdf("./results/tissue_structure/colocalization/misty_importances_ct.pdf", height = 15, width = 5)
 
-plot(importance_panel)
+pdf("./results/tissue_structure/colocalization/misty_importances_ct_intra.pdf", height = 5, width = 5)
+
+plot(intra_importances)
 
 dev.off()
 
+pdf("./results/tissue_structure/colocalization/misty_importances_ct_juxta.pdf", height = 5, width = 5)
+
+plot(juxta_importances)
+
+dev.off()
+
+pdf("./results/tissue_structure/colocalization/misty_importances_ct_para.pdf", height = 5, width = 5)
+
+plot(para_importances)
+
+dev.off()
+
+
 summarized_interactions %>% unnest() %>% write_csv(., file = "./results/tissue_structure/colocalization/misty_importances_ct.csv")
 
-
 # What if we use the mean?
-
-misty_res <- collect_results(paste0(misty_out_folder, misty_outs))
 
 pdf("./results/tissue_structure/colocalization/misty_modelperf_ct.pdf")
 
@@ -126,6 +172,68 @@ mistyR::plot_view_contributions(misty_res)
 
 dev.off()
 
+
+# Supplements -------------------------------------
+
+# R2 distribution of our markers
+
+R2_data <- misty_res$improvements %>%
+  dplyr::filter(measure == "multi.R2") %>%
+  dplyr::mutate(sample = gsub("_c2l", "", sample) %>%
+                  strsplit(.,split = "cm_") %>%
+                  map_chr(., ~ last(.x))) %>%
+  dplyr::left_join(sample_dict, by = c("sample" = "sample_id")) %>%
+  rename("R2" = value)
+
+cell_order <- R2_data %>% 
+  group_by(target) %>%
+  summarize(med_value = median(R2)) %>%
+  arrange(-med_value) %>%
+  pull(target)
+
+cells_R2_tile <- ggplot(R2_data, aes(x = factor(target,
+                                                levels = cell_order), 
+                                     y = sample, fill = R2)) +
+  geom_tile() +
+  coord_equal() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  scale_fill_gradient(low = "black", high = "yellow")
+
+cells_R2_box <- ggplot(R2_data, aes(x = factor(target,
+                                               levels = cell_order), y = R2)) +
+  geom_boxplot() +
+  geom_point(aes(color = patient_group)) +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size =12),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  ylab("Explained variance") +
+  xlab("")
+
+
+write_csv(R2_data, "./results/tissue_structure/colocalization/c2l_R2_results.csv")
+
+pdf("./results/tissue_structure/colocalization/c2l_R2_results.pdf", height = 4, width = 6)
+
+plot(cells_R2_box)
+
+dev.off()
+
+pdf("./results/tissue_structure/colocalization/c2l_R2_results_xtra.pdf", height = 7, width = 7)
+
+plot(cells_R2_tile)
+plot(cells_R2_box_by_group)
+
+dev.off()
+
+cells_R2_box_by_group <- ggplot(R2_data, aes(x = patient_group, y = R2)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(.~target)
+
 # Let's separate importances by different conditions and views
 
 summarized_interactions_group <- sample_importances %>%
@@ -133,7 +241,6 @@ summarized_interactions_group <- sample_importances %>%
   summarize(median_importance = median(Importance)) %>%
   ungroup() %>%
   group_by(view)
-
 
 write_csv(summarized_interactions_group, file = "./results/tissue_structure/colocalization/misty_importances_ct_bygroups.csv")
 
