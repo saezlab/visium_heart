@@ -90,8 +90,8 @@ ora_analysis_hmarks <- state_mrkrs %>%
     
   })) %>%
   dplyr::select(cell_type, ora) %>%
-  unnest() %>%
-  dplyr::filter(corr_p_value < 0.2)
+  unnest() #%>%
+  #dplyr::filter(corr_p_value < 0.2)
 
 ora_analysis_canonical <- state_mrkrs %>%
   dplyr::mutate(ora = map(state_genes, function(state){
@@ -104,8 +104,8 @@ ora_analysis_canonical <- state_mrkrs %>%
     
   })) %>%
   dplyr::select(cell_type, ora) %>%
-  unnest() %>%
-  dplyr::filter(corr_p_value < 0.2)
+  unnest() #%>%
+  #dplyr::filter(corr_p_value < 0.2)
 
 # Per cell, arrange by name, GenesInList take top 10
 
@@ -144,17 +144,28 @@ ora_analysis_canonical_plts <- ora_analysis_canonical %>%
   left_join(useful_gsets_canonical) %>%
   dplyr::mutate(tile_plts = map2(data, gsets, function(dat, gst) {
     
+    dat <- dat %>%
+      dplyr::filter(gset %in% gst) %>%
+      mutate(logpval = -log10(corr_p_value))
+    
+    mapping_q <- quantile(dat$logpval, 0.8)
+    
+    dat <- dat %>%
+      mutate(logpval = ifelse(logpval >= mapping_q, mapping_q, logpval))
+    
     dat %>%
       dplyr::filter(gset %in% gst) %>%
       ggplot(aes(y = factor(gset,
                             levels = levels(gst)),
                  x = name,
-                 fill = -log10(corr_p_value))) +
+                 fill = logpval)) +
       geom_tile() +
       theme_classic() +
       theme(axis.text.x = element_text(angle = 90,
                                        hjust = 1,
-                                       vjust = 0.5)) +
+                                       vjust = 0.5),
+            axis.text = element_text(size = 10),
+            panel.border = element_rect(colour = "black", fill=NA, size=1)) +
       scale_fill_gradient(na.value = "black",low = 'black',high = "yellow") +
       ylab("") +
       xlab("") +
@@ -167,17 +178,27 @@ ora_analysis_hmarks_plts <- ora_analysis_hmarks %>%
   left_join(useful_gsets_hmarks) %>%
   dplyr::mutate(tile_plts = map2(data, gsets, function(dat, gst) {
     
-    dat %>%
+    dat <- dat %>%
       dplyr::filter(gset %in% gst) %>%
+      mutate(logpval = -log10(corr_p_value))
+    
+    mapping_q <- quantile(dat$logpval, 0.8)
+    
+    dat <- dat %>%
+      mutate(logpval = ifelse(logpval >= mapping_q, mapping_q, logpval))
+    
+    dat %>%
       ggplot(aes(y = factor(gset,
                             levels = levels(gst)),
                  x = name,
-                 fill = -log10(corr_p_value))) +
+                 fill = logpval)) +
       geom_tile() +
       theme_classic() +
       theme(axis.text.x = element_text(angle = 90,
                                        hjust = 1,
-                                       vjust = 0.5)) +
+                                       vjust = 0.5),
+            axis.text = element_text(size = 10), 
+            panel.border = element_rect(colour = "black", fill=NA, size=1)) +
       scale_fill_gradient(na.value = "black",low = 'black',high = "yellow") +
       ylab("") +
       xlab("") +
@@ -190,9 +211,13 @@ ora_analysis_hmarks_plts <- ora_analysis_hmarks %>%
 ora_analysis_canonical %>%
   write_csv("./results/cell_states/ora_analysis_canonical_all.csv")
 
-pdf("./results/cell_states/ora_analysis_canonical_all.pdf", height = 9, width = 10)
+pdf("./results/cell_states/ora_analysis_canonical_all.pdf", height = 9, width = 11)
 
-walk(ora_analysis_canonical_plts$tile_plts, plot)
+walk2(ora_analysis_canonical_plts$cell_type, ora_analysis_canonical_plts$tile_plts, function(ct, plt) {
+  
+  plot(plt + ggtitle(ct))
+  
+})
 
 dev.off()
 
@@ -200,9 +225,13 @@ dev.off()
 ora_analysis_hmarks %>%
   write_csv("./results/cell_states/ora_analysis_hmarks_all.csv")
 
-pdf("./results/cell_states/ora_analysis_hmarks_all.pdf", height = 9, width = 10)
+pdf("./results/cell_states/ora_analysis_hmarks_all.pdf", height = 6, width = 11)
 
-walk(ora_analysis_hmarks_plts$tile_plts, plot)
+walk2(ora_analysis_hmarks_plts$cell_type, ora_analysis_hmarks_plts$tile_plts, function(ct, plt) {
+  
+  plot(plt + ggtitle(ct))
+  
+})
 
 dev.off()
 
