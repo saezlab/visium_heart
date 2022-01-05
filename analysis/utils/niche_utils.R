@@ -10,12 +10,19 @@ library(factoextra)
 annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
                            patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
 
+patient_time <- read_csv("./markers/visium_timeinfo.csv") %>%
+  dplyr::select(sample_id, `days after infarction`) %>%
+  rename("time" = `days after infarction`) %>%
+  dplyr::mutate(time = ifelse(time == "control", 0, time)) %>%
+  dplyr::mutate(time = as.numeric(time))
+
 patient_info <- read_csv("./markers/visium_patient_anns_revisions.csv") %>%
   left_join(annotation_names) %>%
   dplyr::select(-patient_group) %>%
   dplyr::rename("patient_group" = patient_group_name) %>%
   dplyr::mutate(patient_group = factor(patient_group, 
-                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched")))
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))) %>%
+  left_join(patient_time)
 
 # 1. Get the proportions of the niches
 
@@ -63,7 +70,7 @@ filter_compositions <- function(niche_props) {
     dplyr::filter(patient_region_id %in% high_qc_pats) %>%
     dplyr::select(patient_region_id, mol_niche, niche_prop) %>%
     tidyr::complete(patient_region_id, mol_niche, fill = list("niche_prop" = 0)) %>%
-    left_join(dplyr::select(patient_info, patient_region_id, patient_group) %>% unique())
+    left_join(dplyr::select(patient_info, patient_region_id, patient_group, major_labl, time) %>% unique())
   
 }
 
@@ -81,6 +88,20 @@ plot_box_niches <- function(filtered_niche_props) {
     ylab("niche proportion")
  
    
+}
+
+plot_box_niches_area <- function(filtered_niche_props) {
+  
+  box_plt <- ggplot(filtered_niche_props, aes(x = major_labl, y = niche_prop, color = major_labl)) +
+    geom_boxplot() +
+    geom_point() +
+    theme_classic() +
+    theme(axis.text = element_text(size = 12),
+          axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12)) +
+    facet_wrap(.~ mol_niche, ncol = 4, scales = "free_y") +
+    ylab("niche proportion")
+  
+  
 }
 
 # Calculate Kruskall-Wallis
@@ -106,14 +127,34 @@ kw_niche_prop_test <- function(filtered_niche_props) {
   
 }
 
+kw_niche_prop_test_area <- function(filtered_niche_props) {
+  
+  niche_test_kw <- filtered_niche_props %>%
+    dplyr::select(mol_niche, niche_prop, major_labl) %>%
+    group_by(mol_niche) %>%
+    nest() %>%
+    mutate(kw_res = map(data, function(dat) {
+      
+      kruskal.test(niche_prop ~ major_labl, 
+                   data = dat) %>%
+        broom::tidy()
+      
+      
+    })) %>%
+    dplyr::select(mol_niche, kw_res) %>%
+    unnest() %>%
+    ungroup() %>%
+    mutate(corr_pval = p.adjust(p.value))
+  
+}
+
+
 # 3. ILR transformations, clustering, UMAPs and PCAs
 
 nichedf_tomatrix <- function(filtered_niche_props) {
   
-  # Clustering by compositions....
-  # Final test, show that relationship between these states separate groups
   complete_niche_info_mat <- filtered_niche_props %>%
-    dplyr::select(-patient_group) %>%
+    dplyr::select(-c("patient_group", "time", "major_labl")) %>%
     pivot_wider(names_from = mol_niche, values_from = niche_prop) %>%
     as.data.frame() %>%
     column_to_rownames("patient_region_id") %>%
@@ -170,6 +211,55 @@ estimate_explvar <- function(ILR_mat) {
   
 }
 
+estimate_explvar_time <- function(ILR_mat, early_only = T) {
+  
+  if(early_only) {
+    
+    useful_samples <- patient_info %>%
+      dplyr::filter(! major_labl %in% c("FZ", "CTRL")) %>%
+      pull(patient_region_id) %>%
+      unique()
+    
+    #Remember that you filter patients before
+    useful_samples <- useful_samples[useful_samples %in% rownames(ILR_mat)]
+    
+    ILR_mat <- ILR_mat[useful_samples, ]
+    
+  }
+  
+  pcs <- prcomp(x = ILR_mat) 
+  
+  pc_summary <- pcs$x %>%
+    as.data.frame() %>%
+    rownames_to_column("patient_region_id") %>%
+    left_join(patient_info %>% dplyr::select(patient_region_id, patient_group, major_labl, time))
+  
+  pc_summary <- pc_summary %>%
+    pivot_longer(-c("patient_region_id", "patient_group", "major_labl", "time")) %>%
+    group_by(name) %>%
+    nest() %>%
+    mutate(aov_res = map(data, function(dat) {
+      lm(value ~ time,data = dat) %>%
+        broom::tidy()
+    }))
+  
+  prop_var <- tibble(expl_var = pcs$sdev/sum(pcs$sdev),
+                     name = colnames(pcs$x))
+  
+  pc_summary <- pc_summary %>% 
+    dplyr::select(aov_res) %>%
+    unnest() %>%
+    dplyr::filter(term == "time") %>%
+    left_join(prop_var) %>%
+    ungroup() %>%
+    dplyr::mutate(p.adj = p.adjust(p.value)) %>%
+    arrange(p.adj)
+  
+  return(pc_summary)
+  
+}
+
+
 # Generate clustering
 
 plot_clust <- function(ILR_mat, explvar_val) {
@@ -191,6 +281,90 @@ plot_clust <- function(ILR_mat, explvar_val) {
                  main = paste0("Expl. var = ", explvar_val)))
   
 }
+
+# Generate PCA instead of clustering - to do
+
+plot_PCA <- function(ILR_mat, 
+                     explvar_val, 
+                     early_only = F,
+                     res_dir) {
+  
+  if(early_only) {
+    
+    useful_samples <- patient_info %>%
+      dplyr::filter(major_labl %in% c("IZ")) %>%
+      pull(patient_region_id) %>%
+      unique()
+    
+    #Remember that you filter patients before
+    useful_samples <- useful_samples[useful_samples %in% rownames(ILR_mat)]
+    
+    ILR_mat <- ILR_mat[useful_samples, ]
+    
+  }
+  
+  pcs <- prcomp(x = ILR_mat) 
+  
+  pc_summary <- pcs$x %>%
+    as.data.frame() %>%
+    rownames_to_column("patient_region_id") %>%
+    left_join(patient_info %>% dplyr::select(patient_region_id, patient_group, major_labl, time))
+  
+  prop_var <- tibble(expl_var = pcs$sdev/sum(pcs$sdev),
+                     name = colnames(pcs$x)) %>%
+    dplyr::filter(name %in% c("PC1", "PC2"))
+  
+  prop_var <- sum(prop_var$expl_var)
+  
+  if(early_only) {
+    
+    plt <- ggplot(pc_summary, 
+           aes(x = PC1, y = PC2, color = patient_group, label = time)) +
+      geom_point() +
+      ggrepel::geom_text_repel() +
+      theme_minimal() +
+      theme(axis.text = element_text(size = 10),
+            panel.border = element_rect(colour = "black", 
+                                        fill=NA, size=0.5)) +
+      ggtitle(paste0("Prop. Expl. Var by time =", round(explvar_val, 2), "\n",
+                     "Expl. Var by PCs = ", round(prop_var, 2)))
+    
+    pdf(paste0(res_dir, "/compPCA_early_only.pdf"), height = 6, width = 7)
+    
+    plot(plt)
+    
+    dev.off()
+    
+    write_csv(pc_summary, paste0(res_dir, "/compPCA_early_only.csv"))
+    
+    
+  } else {
+    
+    plt <- ggplot(pc_summary, 
+           aes(x = PC1, y = PC2, color = patient_group, label = patient_region_id)) +
+      geom_point() +
+      ggrepel::geom_text_repel() +
+      theme_minimal() +
+      theme(axis.text = element_text(size = 10),
+            panel.border = element_rect(colour = "black", 
+                                        fill=NA, size=0.5)) +
+      ggtitle(paste0("Prop. Expl. Var by patient group =", round(explvar_val, 2), "\n",
+                     "Expl. Var by PCs = ", round(prop_var, 2)))
+    
+    pdf(paste0(res_dir, "/compPCA.pdf"), height = 6, width = 7)
+    
+    plot(plt)
+    
+    dev.off()
+    
+    write_csv(pc_summary, paste0(res_dir, "/compPCA.csv"))
+
+  }
+ 
+  return(NULL)
+
+}
+
 
 # 4. Characterize with  cell-states
 

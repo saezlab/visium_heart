@@ -7,12 +7,18 @@ library(Seurat)
 library(tidyverse)
 source("./analysis/utils/niche_utils.R")
 
+ct_niches <- readRDS("./results/niche_mapping/ct_niches/niche_annotation_ct.rds") %>%
+  dplyr::select(row_id, niche) %>%
+  dplyr::rename("spot_id" = row_id,
+                "composition_niche" = niche)
+
 spot_anns <- readRDS("./processed_visium/integration/integrated_slides_umap.rds")[["meta_data"]] %>%
   as.data.frame() %>%
   rownames_to_column("raw_spot_id") %>%
   dplyr::mutate(spot_id = strsplit(raw_spot_id, "_") %>%
                   map_chr(., ~ .x[[1]]) %>%
-                  paste0(orig.ident, "..", .))
+                  paste0(orig.ident, "..", .)) %>%
+  left_join(ct_niches)
 
 umap_data <- readRDS("./processed_visium/integration/integrated_slides_umap.rds")[["reduction"]]@cell.embeddings %>%
   as.data.frame() %>%
@@ -20,12 +26,15 @@ umap_data <- readRDS("./processed_visium/integration/integrated_slides_umap.rds"
   left_join(spot_anns, by = "raw_spot_id") %>%
   dplyr::select(spot_id, UMAP_1, UMAP_2)
 
-
 pat_anns <- read_csv("./markers/visium_patient_anns_revisions.csv")
+
 
 # Select resolutions of interest
 
-int_res <- c("Spatial_snn_res.0.2", "Spatial_snn_res.0.4" , "Spatial_snn_res.0.5", "Spatial_snn_res.0.6", "Spatial_snn_res.0.8")
+int_res <- c("composition_niche",
+             "Spatial_snn_res.0.2")#, "Spatial_snn_res.0.4" , 
+             #"Spatial_snn_res.0.5", "Spatial_snn_res.0.6", 
+             #"Spatial_snn_res.0.8")
 
 spot_anns <- spot_anns %>%
   left_join(pat_anns, by = c("orig.ident" = "sample_id")) %>%
@@ -33,6 +42,11 @@ spot_anns <- spot_anns %>%
 
 ct_description <- readRDS("./results/ind_mats/cell_type_props.rds")
 state_description <- readRDS("./results/ind_mats/cell_state_scorespos.rds")
+
+spot_anns %>%
+  mutate(raw_spot_id = strsplit(spot_id, "[.][.]") %>%
+           map_chr(., ~.x[[2]])) %>%
+  write_csv("./results/niche_mapping/mol_clust_class.csv")
   
 #sample_spot
 
@@ -94,12 +108,22 @@ for(res in int_res) {
   kw_niche_prop_test(filtered_niche_props = filtered_niche_props) %>%
     write_csv(paste0(res_dir, "/niche_props_kwtest.csv"))
   
+  kw_niche_prop_test_area(filtered_niche_props = filtered_niche_props) %>%
+    write_csv(paste0(res_dir, "/niche_props_kwtest_area.csv"))
+  
   # 4. Plot boxplots
   
   pdf(file = paste0(res_dir, "/niche_patcomp.pdf"), height = 16, width = 12)
   
   plot(plot_box_niches(filtered_niche_props = filtered_niche_props))
   write_csv(filtered_niche_props, paste0(res_dir, "/niche_patcomp.csv"))
+  
+  dev.off()
+  
+  pdf(file = paste0(res_dir, "/niche_patcomp_area.pdf"), height = 16, width = 12)
+  
+  plot(plot_box_niches_area(filtered_niche_props = filtered_niche_props))
+  write_csv(filtered_niche_props, paste0(res_dir, "/niche_patcomp_area.csv"))
   
   dev.off()
   
@@ -121,6 +145,30 @@ for(res in int_res) {
     pull(expl_var) %>%
     sum()
   
+  # Explained variance of early time points
+  explvar_early <- estimate_explvar_time(ILR_mat,early_only = T)
+  
+  explvar_early %>% write_csv(paste0(res_dir, "/explvar_time.csv"))
+  
+  explvar_val_early <- explvar_early %>%
+    dplyr::filter(p.adj < 0.1) %>%
+    pull(expl_var) %>%
+    sum()
+  
+  # PCA of compositions of niches
+  
+  plot_PCA(ILR_mat = ILR_mat,
+           explvar_val = explvar_val,
+           early_only = FALSE,
+           res_dir = res_dir)
+  
+  # PCA of composition of niches (Early time points)
+  
+  plot_PCA(ILR_mat = ILR_mat,
+           explvar_val = explvar_val_early,
+           early_only = T,
+           res_dir = res_dir)
+  
   # Clustering
   
   pdf(paste0(res_dir, "/niche_patclust.pdf"), height = 6, width = 5)
@@ -128,6 +176,9 @@ for(res in int_res) {
   plot(plot_clust(ILR_mat = ILR_mat,explvar_val = explvar_val))
   
   dev.off()
+  
+  
+  #UMAP
   
   # 6. What are the representative cell-types and cell-states
   
