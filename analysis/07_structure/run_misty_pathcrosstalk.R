@@ -13,7 +13,8 @@ future::plan(future::multisession)
 # Pipeline definition:
 run_colocalization <- function(slide, 
                                assay, 
-                               useful_features, 
+                               useful_features,
+                               useful_features_ct,
                                out_label, 
                                misty_out_alias = "./results/tissue_structure/misty/pathway_map/pm_") {
   
@@ -27,8 +28,8 @@ run_colocalization <- function(slide,
   view_features <- list("main" = useful_features, 
                         "juxta" = useful_features,
                         "para" = useful_features,
-                        "intra_ct" = NULL,
-                        "para_ct" = NULL)
+                        "intra_ct" = useful_features_ct,
+                        "para_ct" = useful_features_ct)
   # Define spatial context of each view -----
   view_types <- list("main" = "intra", 
                      "juxta" = "juxta",
@@ -76,9 +77,15 @@ misty_outs <- map(slide_files, function(slide_file){
   assay <- assay_label
   DefaultAssay(slide) <- assay
   useful_features <- rownames(slide)
+  useful_features <- useful_features[! useful_features %in% c("TNFa")]
+  
+  useful_features_ct <- rownames(GetAssayData(slide, assay = "c2l"))
+  useful_features_ct <- useful_features_ct[! useful_features_ct %in% "prolif"]
+  
   
   mout <- run_colocalization(slide = slide,
                              useful_features = useful_features,
+                             useful_features_ct = useful_features_ct,
                              out_label = slide_id,
                              assay = assay,
                              misty_out_alias = "./results/tissue_structure/misty/pathway_map/pm_")
@@ -116,10 +123,21 @@ misty_outs <- map(slide_files, function(slide_file){
 # Now get the summary of this ------------------------------------------------------------------------
 
 misty_outs <- list.dirs("./results/tissue_structure/misty/pathway_map",full.names = T,recursive = F)
+misty_outs <- misty_outs[grepl("pm", misty_outs)]
 misty_res <- collect_results(misty_outs)
-pat_ann <- readRDS("./markers/visium_patient_anns_revisions.rds")
 
-pdf("./results/tissue_structure/misty_modelperf_progeny_ct.pdf", height = 6, width = 6)
+# Annotation of slides
+annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
+                           patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
+
+pat_ann <- read_csv("./markers/visium_patient_anns_revisions.csv") %>%
+  left_join(annotation_names) %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched")))
+
+pdf("./results/tissue_structure/misty/pathway_map/misty_modelperf_progeny_ct.pdf", height = 6, width = 6)
 
 mistyR::plot_improvement_stats(misty_res)
 mistyR::plot_view_contributions(misty_res)
@@ -152,39 +170,104 @@ path_R2_tile <- ggplot(R2_data, aes(x = factor(target,
                                      y = sample, fill = R2)) +
   geom_tile() +
   coord_equal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  scale_fill_gradient(low = "black", high = "yellow")
 
 paths_R2_box <- ggplot(R2_data, aes(x = factor(target,
                                                levels = path_order), y = R2)) +
   geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  #geom_point(aes(color = patient_group)) +
+  geom_point() +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size =12),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  ylab("Explained variance") +
+  xlab("")
 
 paths_R2_box_by_group <- ggplot(R2_data, aes(x = patient_group, y = R2)) +
   geom_boxplot() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   facet_wrap(.~target)
 
-pdf("./results/tissue_structure/misty_modelperf_progeny_ct_R2.pdf", height = 6, width = 6)
-
+pdf("./results/tissue_structure/misty/pathway_map/progeny_ct_R2_xtra.pdf", height = 6, width = 6)
 plot(path_R2_tile)
-plot(paths_R2_box)
 plot(paths_R2_box_by_group)
-write_csv(R2_data, "./results/tissue_structure/misty_modelperf_progeny_ct_R2.csv")
-
 dev.off()
 
-# Generate an overall/description
 
-median_importances <- misty_res$importances %>%
+write_csv(R2_data, "./results/tissue_structure/misty/pathway_map/progeny_ct_R2.csv")
+
+pdf("./results/tissue_structure/misty/pathway_map/progeny_ct_R2.pdf", height = 4, width = 6)
+plot(paths_R2_box)
+dev.off()
+
+# Get best performers
+
+R2_value = 10
+
+best_performers <- R2_data %>%
+  dplyr::select(target, sample, R2) %>%
+  dplyr::filter(R2 >= 10) %>%
+  dplyr::mutate(best_performer = T)
+
+# Get all importances
+
+sample_importances <- misty_res$importances %>% 
+  mutate(sample = strsplit(sample, 'pm_') %>%
+           map_chr(., ~.x[[2]]) %>%
+           gsub("_progeny", "", .)) %>%
+  left_join(pat_ann, by = c("sample" = "sample_id"))
+
+# Filter importances based on best performance
+
+sample_importances_filt <-  sample_importances %>%
+  left_join(best_performers %>% dplyr::select(-R2),
+            by = c("Target" = "target", "sample")) %>%
+  dplyr::filter(!is.na(best_performer))
+
+write.csv(sample_importances_filt, "./results/tissue_structure/misty/pathway_map/sample_importances_filt.csv")
+
+# Now, we need to identify the interactions per view and cell that are the most repeated (median)
+
+# Generate an overall/description
+median_importances <- sample_importances_filt%>%
   group_by(view, Predictor, Target) %>%
   summarize(median_importance = median(Importance)) %>%
   ungroup() %>%
   group_by(view) %>%
   nest()
 
+# We need to make the test of median != 0
+
+importance_test <- sample_importances_filt %>%
+  unnest() %>%
+  na.omit() %>%
+  dplyr::select(view, Predictor, Target, Importance) %>%
+  group_by(view, Predictor, Target) %>%
+  nest() %>%
+  mutate(wres = map(data, function(dat) {
+    wilcox.test(dat[[1]], y = NULL, mu = 0, alternative = "greater") %>%
+      broom::tidy()
+  })) %>%
+  dplyr::select(wres) %>%
+  unnest() %>%
+  ungroup() %>%
+  group_by(view) %>%
+  mutate(p_adjust = p.adjust(p.value)) %>%
+  mutate("sign_label" = ifelse(p_adjust <= 0.15, "*", ""))
+
+median_importances <- median_importances %>%
+  unnest() %>%
+  left_join(importance_test, by = c("view", "Predictor", "Target")) %>%
+  nest()
+
 median_importances %>% 
   unnest() %>%
-  write_csv(., file = "./results/tissue_structure/misty_modelperf_progeny_ct_median.csv")
+  write_csv(., file = "./results/tissue_structure/misty/pathway_map/importances_progeny_ct_median.csv")
 
 # Some plotting and manipulation functions
 
@@ -192,6 +275,7 @@ get_sample_order <- function(view_importance) {
   
   #Predictors in rows
   view_importance_mat <- view_importance %>%
+    dplyr::select(Predictor, Target, median_importance) %>%
     pivot_wider(names_from = Target, values_from = median_importance, values_fill = 0) %>%
     column_to_rownames("Predictor") %>%
     as.matrix()
@@ -212,14 +296,19 @@ plot_importance_eqassay <- function(view_importance, cell_order, color_fill = "#
   view_plt = view_importance %>%
     mutate(Predictor = factor(Predictor, levels =  cell_order$target),
            Target = factor(Target, levels = cell_order$target)) %>%
-    ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
+    ggplot(aes(x = Target, y = Predictor, fill = median_importance, label = sign_label)) +
     geom_tile() +
+    geom_text() +
     scale_fill_gradient2(high = color_fill, 
                          midpoint = 0,
                          low = "white",
                          na.value = "grey") +
     ggplot2::coord_equal() +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+          axis.text = element_text(size = 12),
+          axis.title = element_text(size =12),
+          panel.border = element_rect(colour = "black", fill=NA, size=1))
   
   return(view_plt)
 }
@@ -229,27 +318,35 @@ plot_importance_difassay <- function(view_importance, cell_order, color_fill = "
   view_plt = view_importance %>%
     mutate(Predictor = factor(Predictor, levels =  cell_order$predictor),
            Target = factor(Target, levels = cell_order$target)) %>%
-    ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
+    ggplot(aes(x = Target, y = Predictor, fill = median_importance, label = sign_label)) +
     geom_tile() +
+    geom_text() +
     scale_fill_gradient2(high = color_fill, 
                          midpoint = 0,
                          low = "white",
                          na.value = "grey") +
     ggplot2::coord_equal() +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+          axis.text = element_text(size = 12),
+          axis.title = element_text(size =12),
+          panel.border = element_rect(colour = "black", fill=NA, size=1))
   
   return(view_plt)
 }
 
 # Generate panels
 
-pdf("./results/tissue_structure/misty_modelperf_progeny_ct_median.pdf", height = 6, width = 6)
-
 walk2(median_importances$view, median_importances$data, function(v, dat) {
   
   print(v) 
   
+  pdf_out <- paste0("./results/tissue_structure/misty/pathway_map/importances_progeny_ct_median",
+                    "_", v,".pdf")
+  
   cell_order <- get_sample_order(dat)
+  
+  pdf(pdf_out, height = 6, width = 6)
   
   if(grepl("ct", v)) {
     
@@ -267,17 +364,14 @@ walk2(median_importances$view, median_importances$data, function(v, dat) {
   
   plot(plt)
   
+  dev.off()
+  
 } )
 
-dev.off()
 
 # Separate importances by view/group
 
-all_importances <- misty_res$importances %>%
-  dplyr::mutate(sample = gsub("_progeny", "", sample) %>%
-                  strsplit(.,split = "pm_") %>%
-                  map_chr(., ~ last(.x)))%>%
-  dplyr::left_join(pat_ann, by = c("sample" = "sample_id"))
+all_importances <- sample_importances_filt
 
 summarized_interactions_group <- all_importances %>%
   group_by(view, Predictor, Target, patient_group) %>%
@@ -285,7 +379,7 @@ summarized_interactions_group <- all_importances %>%
   ungroup() %>%
   group_by(view)
 
-write_csv(summarized_interactions_group, file = "./results/tissue_structure/misty_modelperf_progeny_ct_median_bygroup.csv")
+write_csv(summarized_interactions_group, file = "./results/tissue_structure/misty/pathway_map/misty_modelperf_progeny_ct_median_bygroup.csv")
 
 summarized_interactions_group_plt <- summarized_interactions_group %>%
   ggplot(aes(x = Target, y = Predictor, fill = median_importance)) +
@@ -299,7 +393,7 @@ summarized_interactions_group_plt <- summarized_interactions_group %>%
   facet_wrap(view ~ patient_group, scales = "free",ncol = 3) 
 
 
-pdf("./results/tissue_structure/misty_modelperf_progeny_ct_median_bygroup.pdf", height = 15, width = 10)
+pdf("./results/tissue_structure/misty/pathway_map/misty_modelperf_progeny_ct_median_bygroup.pdf", height = 15, width = 10)
 
 plot(summarized_interactions_group_plt)
 
