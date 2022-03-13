@@ -101,3 +101,17 @@ plot(fviz_dend(gex_hclust,
                k_colors = rep("black",3)))
 
 dev.off()
+
+pdf("./results/sample_comparison/visium_pb/visium_pb_umap_v2.pdf", height = 3.5, width = 4)
+plt <- read_csv("./results/sample_comparison/visium_pb/visium_pb_umap.txt") %>%
+  ggplot(aes(x = V1, y = V2, color = patient_group)) +
+  geom_point(size = 3) +
+  stat_ellipse(type = "t", linetype = 1) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 12),
+        legend.position = "none") +
+  ylab("UMAP1 (visium pseudobulk)") +
+  xlab("UMAP2 (visium pseudobulk)")
+
+plot(plt)
+dev.off()

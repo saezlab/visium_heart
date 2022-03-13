@@ -5,6 +5,8 @@
 #' using each modality or all of them
 
 library(tidyverse)
+library(compositions)
+library(factoextra)
 
 # Read individual compositions
 
@@ -212,6 +214,28 @@ plot(fviz_dend(gex_hclust,
                rect = TRUE, 
                label_cols = color_palette$col,
                k_colors = rep("black",3)))
+
+dev.off()
+
+# Make panels of pairwise comparisons
+
+order_cells <- kwallis_comps %>% 
+  arrange(corr_p) %>%
+  pull(cell_type)
+
+kwallis_plot <- kwallis_comps %>%
+  mutate(cell_type = factor(cell_type, levels = order_cells)) %>%
+  ggplot(., aes(y = cell_type, x = -log10(corr_p))) +
+  geom_bar(stat = "identity") +
+  geom_vline(xintercept = -log10(0.1)) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 11)) +
+  ylab("") +
+  xlab("-log10(adj.pval)")
+
+pdf("./results/sample_comparison/compositions/barplots_kw.pdf", height = 4, width = 3)
+
+plot(kwallis_plot)
 
 dev.off()
 

@@ -243,9 +243,9 @@ R2_data <- misty_res$improvements %>%
 
 filt_predictors <- R2_data %>%
   dplyr::select(target, sample, R2) %>%
-  dplyr::filter(R2 >= 0.15) %>%
+  dplyr::filter(R2 >= 5) %>%
   dplyr::mutate(keep = TRUE) %>%
-  dplyr::select(target,sample,keep)
+  dplyr::select(target,R2, sample,keep)
 ```
 
 ## Filter 
@@ -361,34 +361,32 @@ imprt_plot <- all_sign_ints %>%
 ```{r}
 
 healthy_vs_fz <- summarize_int_comparison(corr_pval_filt = 0.25, 
-                                          corr_pval_text = 0.05,
+                                          corr_pval_text = 0.15,
                                           max_median_imp_filt = 1,
                                           sample_importances = sample_importances,
                                           patient_group_filt = c("group_1", "group_3"))
 
 healthy_vs_iz <- summarize_int_comparison(corr_pval_filt = 0.25, 
-                                          corr_pval_text = 0.05,
+                                          corr_pval_text = 0.15,
                                           max_median_imp_filt = 1,
                                           sample_importances = sample_importances,
                                           patient_group_filt = c("group_1", "group_2"))
 
 fz_vs_iz <- summarize_int_comparison(corr_pval_filt = 0.25, 
-                                          corr_pval_text = 0.05,
+                                          corr_pval_text = 0.15,
                                           max_median_imp_filt = 1,
                                           sample_importances = sample_importances,
                                           patient_group_filt = c("group_2", "group_3"))
 
 all <- summarize_int_comparison(corr_pval_filt = 0.25, 
-                                          corr_pval_text = 0.05,
+                                          corr_pval_text = 0.15,
                                           max_median_imp_filt = 1,
                                           sample_importances = sample_importances,
                                           patient_group_filt = c("group_1", "group_2", "group_3"))
 
 ```
 
-
 ```{r}
-
 all_comps <- list("healthy_vs_fz" = healthy_vs_fz, 
      "healthy_vs_iz" = healthy_vs_iz,
      "fz_vs_iz" = fz_vs_iz, 
@@ -408,5 +406,119 @@ walk2(all_comps$name, all_comps$value, function(tag, l) {
              tag,".csv"))
   
 })
+
+write.csv(sample_importances, "./results/sample_comparison/spatial/sample_importances.csv")
+```
+
+```{r}
+tags <- c("healthy_vs_fz", 
+             "healthy_vs_iz",
+             "fz_vs_iz")
+
+all_interactions <- map(set_names(tags), ~ paste0("./results/sample_comparison/spatial/sign_interaction_changes_",
+                      .x,
+                      ".csv") %>%
+      read_csv) %>%
+  enframe() %>%
+  unnest()
+
+
+all_interactions <- all_interactions %>%
+  dplyr::select(name, Predictor, Target) %>%
+  pivot_longer(-name,names_to = "cell_type") %>%
+  group_by(name, value) %>%
+  summarise(ntimes = n()) %>%
+  arrange(name, -ntimes) %>%
+  mutate(prop_int = ntimes/sum(ntimes))
+
+
+dplyr::filter(all_interactions, name == "healthy_vs_fz")
+
+dplyr::filter(all_interactions, name == "healthy_vs_iz")
+
+dplyr::filter(all_interactions, name == "fz_vs_iz")
+
+```
+
+```{r}
+
+healthy_vs_fz_filt <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.15,
+                                          max_median_imp_filt = 0,
+                                          sample_importances = sample_importances_filt,
+                                          patient_group_filt = c("group_1", "group_3"))
+
+healthy_vs_iz_filt <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.15,
+                                          max_median_imp_filt = 0,
+                                          sample_importances = sample_importances_filt,
+                                          patient_group_filt = c("group_1", "group_2"))
+
+fz_vs_iz_filt <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.15,
+                                          max_median_imp_filt = 0,
+                                          sample_importances = sample_importances_filt,
+                                          patient_group_filt = c("group_2", "group_3"))
+
+all_filt <- summarize_int_comparison(corr_pval_filt = 0.25, 
+                                          corr_pval_text = 0.15,
+                                          max_median_imp_filt = 0,
+                                          sample_importances = sample_importances_filt,
+                                          patient_group_filt = c("group_1", "group_2", "group_3"))
+
+```
+
+
+```{r}
+all_comps <- list("healthy_vs_fz" = healthy_vs_fz_filt, 
+     "healthy_vs_iz" = healthy_vs_iz_filt,
+     "fz_vs_iz" = fz_vs_iz_filt, 
+     "all" = all_filt) %>%
+  enframe()
+
+walk2(all_comps$name, all_comps$value, function(tag, l) {
+  
+  pdf(paste0("./results/sample_comparison/spatial/sign_interaction_changes_filt_",
+             tag,".pdf"), height = 5, width = 5)
+  
+  plot(l[["plot"]])
+  
+  dev.off()
+  
+  write_csv(l[["data"]], paste0("./results/sample_comparison/spatial/sign_interaction_changes_filt_",
+             tag,".csv"))
+  
+})
+
+write.csv(sample_importances_filt, "./results/sample_comparison/spatial/sample_importances_filt.csv")
+```
+
+```{r}
+tags <- c("healthy_vs_fz", 
+             "healthy_vs_iz",
+             "fz_vs_iz")
+
+all_interactions <- map(set_names(tags), ~ paste0("./results/sample_comparison/spatial/sign_interaction_changes_filt_",
+                      .x,
+                      ".csv") %>%
+      read_csv) %>%
+  enframe() %>%
+  unnest()
+
+
+all_interactions <- all_interactions %>%
+  dplyr::select(name, Predictor, Target) %>%
+  pivot_longer(-name,names_to = "cell_type") %>%
+  group_by(name, value) %>%
+  summarise(ntimes = n()) %>%
+  arrange(name, -ntimes) %>%
+  mutate(prop_int = ntimes/sum(ntimes))
+
+
+dplyr::filter(all_interactions, name == "healthy_vs_fz")
+
+dplyr::filter(all_interactions, name == "healthy_vs_iz")
+
+dplyr::filter(all_interactions, name == "fz_vs_iz")
 
 ```
