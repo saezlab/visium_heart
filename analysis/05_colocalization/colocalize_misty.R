@@ -71,6 +71,7 @@ misty_outs <- map(slide_files, function(slide_file){
   assay <- assay_label
   DefaultAssay(slide) <- assay
   useful_features <- rownames(slide)
+  useful_features <- useful_features[! useful_features %in% "prolif"]
 
   mout <- run_colocalization(slide = slide,
                      useful_features = useful_features,
@@ -115,6 +116,7 @@ misty_outs <- map(slide_files, function(slide_file){
   assay <- assay_label
   DefaultAssay(slide) <- assay
   useful_features <- rownames(slide)
+  useful_features <- useful_features[! useful_features %in% "prolif"]
   
   mout <- run_colocalization(slide = slide,
                              useful_features = useful_features,
