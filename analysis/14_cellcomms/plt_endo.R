@@ -14,7 +14,7 @@ liana_res <- readRDS("./results/cell_comms/Endo/liana_Endo.rds")
 cpdb <- liana_res$cellphonedb %>%
   dplyr::select(source, target, ligand, receptor, lr.mean)
 
-liana_res <- liana_res[which(names(liana_res) != "sca")] %>% 
+liana_res <- liana_res %>% 
   liana_aggregate() %>%
   mutate(log10pvalue = -log10(cellphonedb.pvalue + 0.000001)) %>%
   dplyr::left_join(cpdb, by = c("source", "target", "ligand", "receptor"))
@@ -33,6 +33,7 @@ walk(states, function(state) {
              top = 10,
              file_alias = paste0(state, "_", "rec", "_"),
              max_interactions = 2,
+             filter_marker_genes = T,
              out_dir = "./results/cell_comms/Endo/")
   
   liana_outs(source_groups = state,
@@ -40,6 +41,7 @@ walk(states, function(state) {
              top = 10,
              file_alias = paste0(state, "_", "snd", "_"),
              max_interactions = 2,
+             filter_marker_genes = T,
              out_dir = "./results/cell_comms/Endo/")
   
 })

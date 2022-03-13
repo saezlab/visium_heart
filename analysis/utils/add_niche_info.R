@@ -78,6 +78,7 @@ add_niche_name <- function(visium_file, sample) {
   visium_slide$opt_clust_integrated <- visium_meta$opt_clust_integrated
     
   saveRDS(visium_slide, file = visium_file)
+  
 }
 
 pwalk(visium_df, add_niche_name)

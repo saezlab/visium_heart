@@ -26,7 +26,9 @@ find_allfeat <- function(visium_slide,
     vis_wilcox_markers = FindAllMarkers(visium_slide, 
                                         logfc.threshold = logfc.threshold,
                                         test.use = "wilcox",
-                                        only.pos = only.pos)
+                                        only.pos = only.pos,
+                                        assay = x,
+                                        slot = "data")
   })
   
   return(diff_features)

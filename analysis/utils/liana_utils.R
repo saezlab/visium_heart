@@ -5,6 +5,72 @@
 
 library(tidyverse)
 
+# Annotations in atlas
+atlas_anns <- read_csv(file = "./processed_snrnaseq/cell_states/integrated_rnasamples_anns_wstates.csv")[,"annotation"] %>%
+  pull() %>%
+  unique()
+
+# State markers
+state_mrkrs <- tibble(marker_file = list.files("./cell_states", full.names = T)) %>%
+  dplyr::mutate(cell_type = gsub("./cell_states/", "", marker_file)) %>%
+  dplyr::mutate(marker_file = paste0(marker_file,"/annotation.rds")) %>%
+  dplyr::mutate(markers = map(marker_file, readRDS)) %>%
+  dplyr::select(cell_type, markers) %>%
+  unnest() %>%
+  dplyr::select(cell_type, p_val_adj, cluster, gene, avg_log2FC) %>%
+  dplyr::filter(p_val_adj < 0.05) %>%
+  dplyr::select(-p_val_adj) %>%
+  dplyr::filter(! grepl("Adipo", cell_type),
+                ! grepl("Mast", cell_type)) %>%
+  dplyr::select(cluster,gene) %>%
+  dplyr::rename("cell_class" = cluster) %>%
+  dplyr::mutate("right_ann" = cell_class %in% atlas_anns) %>%
+  dplyr::mutate(cell_class = as.character(cell_class))
+
+# Check wrong namings and manually change them
+
+state_mrkrs %>% 
+  dplyr::select(cell_class, right_ann) %>%
+  unique() %>%
+  dplyr::filter(right_ann == F)
+
+state_mrkrs %>% 
+  dplyr::select(cell_class, right_ann) %>%
+  unique() %>%
+  dplyr::filter(right_ann == T) %>%
+  print(n = 50)
+
+# Do the modifications needed
+
+state_mrkrs <- state_mrkrs %>%
+  mutate(cell_class = ifelse(cell_class == "DCs_FLT3_ITGAX", 
+                             "Monocytes",
+                             cell_class)) %>%
+  mutate(cell_class = ifelse(cell_class == "Monocyte_CCL18", 
+                             "CCL18_Macrophages",
+                             cell_class)) %>%
+  mutate(cell_class = ifelse(cell_class == "Monocyte_SPP1", 
+                             "SPP1_Macrophages",
+                             cell_class)) %>%
+  dplyr::select(cell_class, gene)
+
+# Plain cell-type markers
+
+cell_type_mrkrs <- read_csv("./results/cell_markers/edgeR_cellmrkrs.csv") %>%
+dplyr::filter(logFC > 0, FDR < 0.15) %>%
+  arrange(name, FDR, - logFC) %>%
+  dplyr::filter(!grepl("^AC[0-9]", gene)) %>%
+  dplyr::filter(!grepl("^AL[0-9]", gene)) %>%
+  dplyr::filter(!grepl("^LINC[0-9]", gene)) %>%
+  arrange(name, FDR, -logFC) %>%
+  dplyr::select(name, gene) %>%
+  dplyr::rename("cell_class" = name)
+
+cell_class_mrkrs <- bind_rows(state_mrkrs, cell_type_mrkrs) %>%
+  mutate("gene_exists" = TRUE)
+
+  
+# Function to plot LIANA results
 liana_dotplot <- function(liana_agg,
                           source_groups,
                           target_groups,
@@ -78,16 +144,39 @@ liana_outs <- function(source_groups,
                        top = 10,
                        file_alias,
                        max_interactions = 2,
+                       filter_marker_genes = F,
                        out_dir) {
   
   print(source_groups)
   
-  # Endo (receivers)
+  # (receivers)
   state_reaceivers <- liana_res %>%
     filter(source %in% source_groups,
-           target %in% target_groups)
+           target %in% target_groups) %>%
+    dplyr::filter(cellphonedb.pvalue <= (0.05))
+  
+  # Filter interactions based on markers
+  
+  if(filter_marker_genes == T) {
+    
+    state_reaceivers <- left_join(state_reaceivers, 
+                      cell_class_mrkrs, 
+                      by = c("source" = "cell_class", 
+                             "ligand" = "gene")) %>%
+      dplyr::rename("in_source" = gene_exists) %>%
+      dplyr::filter(in_source == TRUE) %>%
+      left_join(., 
+                cell_class_mrkrs, 
+                by = c("target" = "cell_class",
+                       "receptor" = "gene")) %>%
+      rename("in_target" = gene_exists) %>%
+      dplyr::filter(in_target == TRUE)
+      
+  }
   
   # For each combo we will get the top 10 interactions
+  # After filtering for specificity
+  
   state_filt_ints <- state_reaceivers %>%
     dplyr::arrange(source, target, aggregate_rank) %>%
     group_by(source, target) %>%
@@ -116,7 +205,7 @@ liana_outs <- function(source_groups,
                                          source_groups = source_groups,
                                          target_groups = target_groups,
                                          specificity = 'log10pvalue',
-                                         magnitude = "lr.mean")
+                                         magnitude = "sca.LRscore")
   
   pdf(paste0(out_dir, file_alias,"_filt.pdf"), height = 6, width = 7)
   

@@ -1,4 +1,0 @@
-element	intro
-#Welcome	Welcome to the interactive tour of endothelial cells created with Bioconductor's iSEE. Click on the 'Next' button  or use the right arrow of your keyboard to proceed into your tour.
-#ReducedDimensionPlot1	This panel contains low-dimensional representations (e.g., PCA, harmony corrected PCA, or UMAP) of the dataset of interest. Here, each point represents a cell.
-#FeatureAssayPlot1	This panel allows you to visualize the expression of a gene (CPM or raw counts) or quality control measures of the cells grouped by a variable of interest (eg. cell-type, cell-state, sample of origin, etc.)

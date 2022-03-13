@@ -42,7 +42,7 @@ edgeR_filtering <- function(expression_matrix,
 cpm_norm <- function(expression_matrix, scale_factor = 10000) {
   # First we transpose because of R conventions
   # Correct by coverage
-  norm_mtx <- t(t(expression_matrix + 1)/colSums(expression_matrix))
+  norm_mtx <- t(t(expression_matrix)/colSums(expression_matrix))
   norm_mtx <- log1p(norm_mtx * scale_factor)
   return(norm_mtx)
 }
@@ -52,14 +52,14 @@ cpm_norm <- function(expression_matrix, scale_factor = 10000) {
 #' @param matA: count matrix with samples in columns and genes in rows
 #' @param matB: count matrix with samples in columns and genes in rows
 #' @param jsd: use Jensen-Shannon divergence distance? (only for raw counts)
-compare_profiles <- function(matA, matB, jsd = TRUE) {
+compare_profiles <- function(matA, matB, jsd = TRUE, matA_label = "A", matB_label = "B") {
   
   gene_ids <- intersect(rownames(matA), 
                         rownames(matB))
   
-  colnames(matA) <- paste0("A_", colnames(matA))
+  colnames(matA) <- paste0(matA_label, colnames(matA))
   
-  colnames(matB) <- paste0("B_", colnames(matB))
+  colnames(matB) <- paste0(matB_label, colnames(matB))
   
   matA <- matA[gene_ids, colSums(matA)>0]
   matB <- matB[gene_ids, colSums(matB)>0]
@@ -115,6 +115,44 @@ separate_pseudobulk = function(mat, cell_state_dic) {
 }
 
 
+#' Filter matrix by gene
+#' @param expression_mat: a expression matrix with genes in rows and samples in colums
+#' @param gene_list: do you want to use jensen shannon divergences distances?
+#' @return a reduced matrix containing only genes of interest
+filter_genes <- function(expression_mat, gene_list) {
+  
+  gene_list <- gene_list[gene_list %in% rownames(expression_mat)]
+  
+  if(length(gene_list) > 0) {
+    
+    return(expression_mat[gene_list,])
+    
+  } else{
+    
+    NULL
+    
+  }
+}
+
+#' Compare expression profiles of the same matrix
+#' @param expression_mat: a expression matrix with genes in rows and samples in colums
+#' @param jsd: do you want to use jensen shannon divergences distances?
+#' @return a distance matrix
+self_compare <- function(expression_mat, jsd = T) {
+  
+  if(jsd) {
+    compare_profiles(expression_mat,
+                     expression_mat)
+    
+  } else {
+    
+    compare_profiles(expression_mat,
+                     expression_mat,
+                     jsd = F)
+    
+  }
+  
+}
 
 
 

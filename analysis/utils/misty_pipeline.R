@@ -2,7 +2,6 @@
 # roramirezf@uni-heidelberg.de
 
 # Functions used in pipelines
-
 library(tidyverse)
 library(Seurat)
 library(mistyR)
@@ -114,6 +113,12 @@ run_state_ppline <- function(ROI_ct, #cts defining the region of interest
     
     # Get useful spots - ROI
     useful_spots <- get_ct_spots(slide, ct = ROI_ct, filter_prop = ROI_prop)
+    
+    if(length(useful_spots) < 25) {
+      
+      return(NULL)
+      
+    } 
     
     # Get ct states that are useful
     
@@ -281,6 +286,12 @@ run_state_ppline_ct <- function(ROI_ct,
     # Get useful spots - ROI
     useful_spots <- get_ct_spots(slide, ct = ROI_ct, filter_prop = ROI_prop)
     
+    if(length(useful_spots) < 25) {
+      
+      return(NULL)
+      
+    } 
+    
     # Get predictor cell-types
     all_cts <- rownames(GetAssayData(slide, assay = "c2l"))
     all_cts <- all_cts[!(all_cts %in% c(ROI_ct, "prolif"))]
@@ -415,6 +426,12 @@ run_state_ppline_ct_simple <- function(ROI_ct,
     
     # Get useful spots - ROI
     useful_spots <- get_ct_spots(slide, ct = ROI_ct, filter_prop = ROI_prop)
+    
+    if(length(useful_spots) < 25) {
+      
+      return(NULL)
+      
+    } 
     
     # Get predictor cell-types
     all_cts <- rownames(GetAssayData(slide, assay = "c2l"))
@@ -651,4 +668,116 @@ plot_int_panels <- function(visium_slide, ROI_ct, param_list) {
                                                                  "predictor_cts", "predictor_cts_para"),
                            align = "hv")
 }
+
+# Group correlations estimated from the pipeline
+
+collect_correlations <- function(misty_out_folder, r2_filter, sample_dict) {
+  
+  misty_outs <- list.files(misty_out_folder, full.names = T)
+  misty_outs <- misty_outs[grepl("mstate", misty_outs)]
+  
+  paramdf <- tibble(misty_out_file = misty_outs) %>%
+    mutate(sample = strsplit(misty_out_file, 'mstate_') %>%
+             map_chr(., ~.x[[2]])) %>%
+    mutate(cor_res = paste0(misty_out_file, "/plots/state_cor.csv")) %>%
+    mutate(cor_res = map(cor_res, read_csv))
+  
+  misty_res <- collect_results(misty_outs)
+  
+  model_performance <- misty_res$improvements %>% dplyr::filter(grepl("intra.R2", measure) | 
+                                                                  grepl("multi.R2", measure)) %>%
+    mutate(sample = strsplit(sample, 'mstate_') %>%
+             map_chr(., ~.x[[2]]))
+  
+  importances_filtered <- misty_res$importances %>%
+    mutate(sample = strsplit(sample, 'mstate_') %>%
+             map_chr(., ~.x[[2]])) %>%
+    left_join(sample_dict, by = c("sample" = "sample_id"))
+  
+  cors_filtered <- paramdf %>%
+    dplyr::select(sample, cor_res) %>%
+    unnest() %>%
+    dplyr::rename("correlation" = value) %>%
+    dplyr::mutate(feature_a = gsub("-", ".", feature_a),
+                  feature_b = gsub("-", ".", feature_b)) %>%
+    left_join(sample_dict, by = c("sample" = "sample_id"))
+  
+  best_performers <- model_performance %>% 
+    dplyr::filter(measure == "multi.R2") %>% 
+    group_by(target) %>% 
+    dplyr::filter(value > r2_filter) %>%
+    arrange(target) 
+  
+  selected_cors <- best_performers %>%
+    left_join(cors_filtered, 
+              by = c("sample", 
+                     "target" = "feature_a")) %>%
+    na.omit() 
+  
+  return(selected_cors)
+  
+}
+
+# Plot comparisons of correlations
+
+plot_box_pw_cor <- function(cors, cor_comps, area = F) {
+  
+  cors_info <- cors %>%
+    group_by(target, feature_b) %>%
+    nest() %>%
+    dplyr::rename("cor_data" = data)
+  
+  pw_info <- cor_comps %>%
+    group_by(target, feature_b) %>%
+    dplyr::select(group1, group2, p , p.adj) %>%
+    nest() %>%
+    dplyr::rename("pw_data" = data)
+  
+  boxplot_df <- left_join(cors_info, pw_info) %>%
+    dplyr::filter(map_lgl(pw_data, ~ is.null(.x)) != TRUE) %>%
+    mutate(bxplt = map2(cor_data, pw_data, function(crs, pw, area_flag = area) {
+      
+      # Here you filter areas that were tested
+      if(area_flag) {
+        groups_list <- unique(c(pw$group1, pw$group2))
+        crs <- crs %>%
+          dplyr::filter(major_labl %in% groups_list)
+      }
+      
+      max_val <- max(crs$correlation) + 0.05
+      
+      if(area_flag) {
+        
+        box_plt <- ggplot(crs, aes(x = major_labl, y = correlation, color = major_labl))
+        
+      } else {
+        
+        box_plt <- ggplot(crs, aes(x = patient_group, y = correlation, color = patient_group))
+        
+      }
+      
+      box_plt <- box_plt +
+        geom_boxplot() +
+        geom_point() +
+        ggpubr::stat_pvalue_manual(pw, label = "p.adj", 
+                                   y.position = max_val, 
+                                   step.increase = 0.1,
+                                   tip.length = 0.01,size = 3) +
+        theme_classic() +
+        theme(axis.text = element_text(size = 11),
+              axis.text.x = element_text(angle = 90, 
+                                         hjust = 1, 
+                                         vjust = 0.5, 
+                                         size = 11),
+              legend.position = "none") +
+        ylab("correlation") 
+      
+      
+    }))
+  
+  return(boxplot_df)
+}
+
+
+
 
