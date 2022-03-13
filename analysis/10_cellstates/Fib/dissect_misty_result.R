@@ -7,6 +7,10 @@ library(tidyverse)
 library(Seurat)
 library(mistyR)
 library(ggpubr)
+library(viridis)
+library(cowplot)
+source("./analysis/utils/misty_pipeline.R")
+source("./analysis/utils/spatial_plots_utils.R")
 
 # Get patient annotation
 annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
@@ -300,10 +304,124 @@ walk(views, function(v) {
 }
 )
 
+# Plot best examples:
+
+samples <- importances_filtered %>%
+  dplyr::filter(Target == "Fib.Myofib",
+                Predictor == "Myeloid.Monocyte.SPP1") %>%
+  arrange(-Importance) %>%
+  dplyr::slice(1:15) %>%
+  pull(sample) %>%
+  unique()
+
+walk(samples, function(s) {
+  
+  print(s)
+  
+  slide_id <- s
+  slide_file <- paste0(s, ".rds")
+  state_origin <- "cell_states"
+  print(slide_file)
+  slide_files_folder <- "./processed_visium/objects/"
+  
+  # Read spatial transcriptomics data and transform states to be useful for modeling
+  slide <- readRDS(paste0(slide_files_folder, slide_file)) %>%
+    positive_states(., assay = state_origin) %>%
+    filter_states(slide = .,
+                  by_prop = F,
+                  prop_thrsh = 0.1)
+  
+  DefaultAssay(slide) <- "c2l"
+  
+  ct_plot <- SpatialFeaturePlot(slide, 
+                                   features = "Fib",
+                                   min.cutoff = "q1",
+                                   max.cutoff = "q99", 
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "B")
+  
+  DefaultAssay(slide) <- "cell_states_pos"
+  
+  state_plot <- SpatialFeaturePlot(slide, 
+                                   features = "Fib-Myofib",
+                                   min.cutoff = "q1",
+                                   max.cutoff = "q99", 
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  myeloid_state_plot <- SpatialFeaturePlot(slide, 
+                                   features = "Myeloid-Monocyte-SPP1",
+                                   min.cutoff = "q1",
+                                   max.cutoff = "q99", 
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  
+  pdf(paste0("./results/state_structure/Fib_Myeloid/myof_spp1_examples/", slide_id,
+             "_myof_allslide.pdf"), height = 6, width = 9)
+  
+  plot(cowplot::plot_grid(ct_plot, state_plot, myeloid_state_plot,nrow = 1))
+  
+  dev.off()
+  
+})
+
+# Plot CCL18 and other things
 
 
-
-
-
-
-
+samples <- importances_filtered %>%
+  dplyr::filter(Predictor == "Myeloid.Monocyte.CCL18") %>%
+  arrange(-Importance) %>%
+  dplyr::slice(1:10) %>%
+  dplyr::select(sample, Target)
+ 
+walk2(samples$sample, samples$Target, function(s, target) {
+  
+  print(s)
+  
+  slide_id <- s
+  slide_file <- paste0(s, ".rds")
+  state_origin <- "cell_states"
+  print(slide_file)
+  slide_files_folder <- "./processed_visium/objects/"
+  
+  # Read spatial transcriptomics data and transform states to be useful for modeling
+  slide <- readRDS(paste0(slide_files_folder, slide_file)) %>%
+    positive_states(., assay = state_origin) %>%
+    filter_states(slide = .,
+                  by_prop = F,
+                  prop_thrsh = 0.1)
+  
+  DefaultAssay(slide) <- "cell_states_pos"
+  
+  
+  target <- gsub("[.]","-", target)
+  
+  state_plot <- SpatialFeaturePlot(slide, 
+                                   features = target,
+                                   max.cutoff = "q99", 
+                                   min.cutoff = "q1",
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  myeloid_state_plot <- SpatialFeaturePlot(slide, 
+                                           features = "Myeloid-Monocyte-CCL18",
+                                           max.cutoff = "q99", 
+                                           min.cutoff = "q1",
+                                           stroke = 0,
+                                           pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  
+  pdf(paste0("./results/state_structure/Fib_Myeloid/fib_ccl18_examples/", slide_id,
+             "_myof_allslide.pdf"), height = 6, width = 6)
+  
+  plot(cowplot::plot_grid(state_plot, myeloid_state_plot))
+  
+  dev.off()
+  
+})

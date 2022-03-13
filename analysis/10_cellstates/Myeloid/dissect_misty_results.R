@@ -6,6 +6,11 @@
 library(tidyverse)
 library(Seurat)
 library(mistyR)
+library(ggpubr)
+library(viridis)
+source("./analysis/utils/misty_pipeline.R")
+source("./analysis/utils/spatial_plots_utils.R")
+
 
 # Get patient annotation
 annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
@@ -20,7 +25,7 @@ sample_dict <- read_csv("./markers/visium_patient_anns_revisions.csv") %>%
 
 # Explained variance filter
 r2_filter <- 10
-misty_out_folder <- "./results/state_structure/PC_ct/"
+misty_out_folder <- "./results/state_structure/Myeloid_ct/"
 misty_outs <- list.files(misty_out_folder, full.names = T)
 misty_outs <- misty_outs[grepl("mstate", misty_outs)]
 
@@ -82,7 +87,7 @@ RMSE_data_plt_mrkrs <- RMSE_data %>%
   stat_compare_means(label.y = 4)
 
 pdf(paste0(misty_out_folder,"mrkr_RMSE.pdf"), height = 4, width = 3)
-plot(RMSE_data_plt_mrkrs)
+plot(R2_data_plt_mrkrs)
 dev.off()
 
 # Then show the contributions
@@ -188,6 +193,19 @@ summarized_importances_plts <- summarized_importances %>%
     
   }))
 
+
+walk2(summarized_importances_plts$view, summarized_importances_plts$gplots, function(v, gplot) {
+  
+  pdf_out <- paste0(misty_out_folder,"/median_importances", "_", v, ".pdf")
+  
+  pdf(pdf_out, height = 4, width = 5)
+  
+  plot(gplot)
+  
+  dev.off()
+  
+})
+
 pdf(file = paste0(misty_out_folder,"/median_importances.pdf"), height = 4, width = 4)
 
 walk(summarized_importances_plts$gplots, plot)
@@ -257,49 +275,3 @@ pdf(file = paste0(misty_out_folder,"/contribution_group_comparisons.pdf"), heigh
 walk(contribution_gcomp_plts, plot)
 
 dev.off()
-
-# Finally importances
-# Here we are only going to compare importances of capillary cells
-
-target <- "Endo.Capillary.Endo"
-
-view_name <- "para_pred_5"
-
-imp_comp_plts <- importances_filtered %>%
-  dplyr::filter(view == view_name,
-                Target == target) %>%
-  group_by(Predictor) %>%
-  nest() %>%
-  mutate(gplot = map2(Predictor, data, function(pred, dat) {
-    
-    ggplot(dat, aes(x = patient_group, y = Importance, color = patient_group)) +
-      geom_boxplot() +
-      geom_point() +
-      theme_classic() +
-      theme(axis.text = element_text(size = 12),
-            axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-      ggtitle(pred) +
-      stat_compare_means(comparisons = my_comparisons, label="p.adj") +
-      ylab("Importance") +
-      xlab("")
-    
-  }))
-
-
-pdf(file = paste0(misty_out_folder,"/",target, "_", view_name,"imp_comp.pdf"), height = 5, width = 4)
-
-walk(imp_comp_plts$gplot, plot)
-
-dev.off()
-
-
-
-
-
-
-
-
-
-
-
-

@@ -22,7 +22,7 @@ slide_ids <- gsub("[.]rds", "", slide_files)
 target_list <- c("Endo-Arterial-Endo", "Endo-Capillary-Endo", "Endo-Endocardial-Endo",
                  "Endo-Lymphatic-Endo", "Endo-Venous-Endo")
 
-# CM ROI -----------------------------------------------
+# Endo ROI -----------------------------------------------
 
 run_state_ppline_ct(ROI_ct = "Endo",
                     ROI_prop = 0.1,
@@ -33,23 +33,37 @@ run_state_ppline_ct(ROI_ct = "Endo",
                     target_assay = "cell_states")
 
 misty_out_folder <- "./results/state_structure/Endo_ct/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
+performance_all_misty(misty_out_folder, r2_filter = 10)
 
 
-run_state_ppline_ct(ROI_ct = "Endo",
-                    ROI_prop = 0.1,
-                    mask_by_prop = F,
-                    mask_threshold = 0.1,
-                    folder_label = "Endo_ct_ms",
-                    targets =  target_list,
-                    target_assay = "cell_states_pos",
-                    state_origin = "cell_states_ms")
-
-misty_out_folder <- "./results/state_structure/Endo_ct_ms/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
-
+# # Increasing the precision -----------------------------------------------
+# 
+# run_state_ppline_ct(ROI_ct = "Endo",
+#                     ROI_prop = 0.3,
+#                     mask_by_prop = F,
+#                     mask_threshold = 0.3,
+#                     folder_label = "Endo_ct_prec",
+#                     targets =  target_list,
+#                     target_assay = "cell_states")
+# 
+# misty_out_folder <- "./results/state_structure/Endo_ct_prec/"
+# performance_all_misty(misty_out_folder, r2_filter = 10)
+# 
 
 # run_state_ppline_ct(ROI_ct = "Endo",
+#                     ROI_prop = 0.1,
+#                     mask_by_prop = F,
+#                     mask_threshold = 0.1,
+#                     folder_label = "Endo_ct_ms",
+#                     targets =  target_list,
+#                     target_assay = "cell_states_pos",
+#                     state_origin = "cell_states_ms")
+# 
+# misty_out_folder <- "./results/state_structure/Endo_ct_ms/"
+# performance_all_misty(misty_out_folder, r2_filter = 0.1)
+# 
+# 
+# # run_state_ppline_ct(ROI_ct = "Endo",
 #                     ROI_prop = 0.1,
 #                     mask_by_prop = F,
 #                     mask_threshold = 0.1,

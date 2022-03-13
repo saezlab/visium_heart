@@ -41,22 +41,22 @@ run_state_ppline(ROI_ct = "Fib",
                  state_origin = "cell_states")#Defines region of interest,
 
 misty_out_folder <- "./results/state_structure/Fib_Myeloid/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
+performance_all_misty(misty_out_folder, r2_filter = 10)
 
-# Targets are positive and masked
-run_state_ppline(ROI_ct = "Fib",
-                 ROI_prop = 0.1,
-                 mask_by_prop = F,
-                 mask_threshold = 0.1,
-                 folder_label = "Fib_Myeloid_pos",
-                 targets =  target_list,
-                 predictors = predictors,
-                 join_trgts_pred = F,
-                 target_assay = "cell_states_pos",
-                 state_origin = "cell_states")#Defines region of interest,
-
-misty_out_folder <- "./results/state_structure/Fib_Myeloid_pos/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
+# # Targets are positive and masked
+# run_state_ppline(ROI_ct = "Fib",
+#                  ROI_prop = 0.1,
+#                  mask_by_prop = F,
+#                  mask_threshold = 0.1,
+#                  folder_label = "Fib_Myeloid_pos",
+#                  targets =  target_list,
+#                  predictors = predictors,
+#                  join_trgts_pred = F,
+#                  target_assay = "cell_states_pos",
+#                  state_origin = "cell_states")#Defines region of interest,
+# 
+# misty_out_folder <- "./results/state_structure/Fib_Myeloid_pos/"
+# performance_all_misty(misty_out_folder, r2_filter = 0.1)
 
 # 
 # # Weighted mapping by proportions

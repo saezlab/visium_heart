@@ -6,6 +6,11 @@
 library(tidyverse)
 library(Seurat)
 library(mistyR)
+library(ggpubr)
+library(viridis)
+source("./analysis/utils/misty_pipeline.R")
+source("./analysis/utils/spatial_plots_utils.R")
+
 
 # Get patient annotation
 annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
@@ -19,7 +24,7 @@ sample_dict <- read_csv("./markers/visium_patient_anns_revisions.csv") %>%
                                        levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched")))
 
 # Explained variance filter
-r2_filter <- .10
+r2_filter <- 10
 misty_out_folder <- "./results/state_structure/Endo_ct/"
 misty_outs <- list.files(misty_out_folder, full.names = T)
 misty_outs <- misty_outs[grepl("mstate", misty_outs)]
@@ -188,6 +193,19 @@ summarized_importances_plts <- summarized_importances %>%
     
   }))
 
+
+walk2(summarized_importances_plts$view, summarized_importances_plts$gplots, function(v, gplot) {
+  
+  pdf_out <- paste0(misty_out_folder,"/median_importances", "_", v, ".pdf")
+  
+  pdf(pdf_out, height = 4, width = 5)
+  
+  plot(gplot)
+  
+  dev.off()
+  
+})
+
 pdf(file = paste0(misty_out_folder,"/median_importances.pdf"), height = 4, width = 4)
 
 walk(summarized_importances_plts$gplots, plot)
@@ -262,7 +280,6 @@ dev.off()
 # Here we are only going to compare importances of capillary cells
 
 target <- "Endo.Capillary.Endo"
-
 view_name <- "para_pred_5"
 
 imp_comp_plts <- importances_filtered %>%
@@ -293,9 +310,199 @@ walk(imp_comp_plts$gplot, plot)
 dev.off()
 
 
+target <- "Endo.Capillary.Endo"
+view_name <- "intra_pred"
+
+imp_comp_plts <- importances_filtered %>%
+  dplyr::filter(view == view_name,
+                Target == target) %>%
+  group_by(Predictor) %>%
+  nest() %>%
+  mutate(gplot = map2(Predictor, data, function(pred, dat) {
+    
+    ggplot(dat, aes(x = patient_group, y = Importance, color = patient_group)) +
+      geom_boxplot() +
+      geom_point() +
+      theme_classic() +
+      theme(axis.text = element_text(size = 12),
+            axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+      ggtitle(pred) +
+      stat_compare_means(comparisons = my_comparisons, label="p.adj") +
+      ylab("Importance") +
+      xlab("")
+    
+  }))
 
 
+pdf(file = paste0(misty_out_folder,"/",target, "_", view_name,"imp_comp.pdf"), height = 5, width = 4)
 
+walk(imp_comp_plts$gplot, plot)
+
+dev.off()
+
+# Print examples
+# Arterial
+
+best_predicted <- R2_data %>% 
+  arrange(-value) %>%
+  dplyr::filter(target == "Endo.Arterial.Endo") %>%
+  slice(1:10) %>%
+  pull(sample)
+
+
+samples <- importances_filtered %>%
+  dplyr::filter(sample %in% best_predicted) %>%
+  dplyr::filter(Predictor == "vSMCs",
+                view == "intra_pred",
+                Target == "Endo.Arterial.Endo") %>%
+  arrange(-Importance) %>%
+  dplyr::slice(1:10) %>%
+  pull(sample) %>%
+  unique()
+
+walk(samples, function(s) {
+  
+  print(s)
+  
+  # vSMCs
+  slide_id <- s
+  slide_file <- paste0(s, ".rds")
+  state_origin <- "cell_states"
+  print(slide_file)
+  slide_files_folder <- "./processed_visium/objects/"
+  
+  # Read spatial transcriptomics data and transform states to be useful for modeling
+  slide <- readRDS(paste0(slide_files_folder, slide_file)) %>%
+    positive_states(., assay = state_origin) %>%
+    filter_states(slide = .,
+                  by_prop = F,
+                  prop_thrsh = 0.1)
+  
+  DefaultAssay(slide) <- "cell_states_pos"
+  
+  state_plot <- SpatialFeaturePlot(slide, 
+                                   features = "Endo-Arterial-Endo",
+                                   max.cutoff = "q99", 
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  DefaultAssay(slide) <- "c2l"
+  
+  vsmc_plot <- SpatialFeaturePlot(slide, 
+                                  features = "vSMCs", 
+                                  max.cutoff = "q99", 
+                                  stroke = 0,
+                                  pt.size.factor = 1.5, 
+                                  crop = T) +
+    scale_fill_viridis(option = "A")
+  
+  
+  pdf(paste0("./results/state_structure/Endo_ct/endoarterial_slides/", slide_id,
+             "_endoarterial_allslide.pdf"), height = 4, width = 4)
+  
+  plot(state_plot)
+  
+  dev.off()
+  
+  pdf(paste0("./results/state_structure/Endo_ct/endoarterial_slides/", slide_id,
+             "_vsmcs_allslide.pdf"), height = 4, width = 4)
+  
+  plot(vsmc_plot)
+  
+  dev.off()
+  
+})
+
+
+# Capillary
+
+best_predicted <- R2_data %>% 
+  arrange(-value) %>%
+  dplyr::filter(target == "Endo.Capillary.Endo") %>%
+  slice(1:50) %>%
+  pull(sample)
+
+
+samples <- importances_filtered %>%
+  dplyr::filter(sample %in% best_predicted) %>%
+  dplyr::filter((Predictor == "CM") | (Predictor == "PC"),
+                view == "intra_pred",
+                Target == "Endo.Capillary.Endo") %>%
+  arrange(-Importance) %>%
+  dplyr::slice(1:50) %>%
+  pull(sample) %>%
+  unique()
+
+walk(samples, function(s) {
+  
+  print(s)
+  
+  # vSMCs
+  slide_id <- s
+  slide_file <- paste0(s, ".rds")
+  state_origin <- "cell_states"
+  print(slide_file)
+  slide_files_folder <- "./processed_visium/objects/"
+  
+  # Read spatial transcriptomics data and transform states to be useful for modeling
+  slide <- readRDS(paste0(slide_files_folder, slide_file)) %>%
+    positive_states(., assay = state_origin) %>%
+    filter_states(slide = .,
+                  by_prop = F,
+                  prop_thrsh = 0.1)
+  
+  DefaultAssay(slide) <- "cell_states_pos"
+  
+  state_plot <- SpatialFeaturePlot(slide, 
+                                   features = "Endo-Capillary-Endo",
+                                   max.cutoff = "q99", 
+                                   min.cutoff = "q1",
+                                   stroke = 0,
+                                   pt.size.factor = 1.5) +
+    scale_fill_viridis(option = "D")
+  
+  DefaultAssay(slide) <- "c2l"
+  
+  cm_plot <- SpatialFeaturePlot(slide, 
+                                  features = "CM", 
+                                  max.cutoff = "q99", 
+                                  stroke = 0,
+                                  pt.size.factor = 1.5, 
+                                  crop = T) +
+    scale_fill_viridis(option = "A")
+  
+  pc_plot <- SpatialFeaturePlot(slide, 
+                                features = "PC", 
+                                max.cutoff = "q99", 
+                                stroke = 0,
+                                pt.size.factor = 1.5, 
+                                crop = T) +
+    scale_fill_viridis(option = "A")
+  
+  
+  pdf(paste0("./results/state_structure/Endo_ct/endocapillary_slides/", slide_id,
+             "_endocapillary_allslide.pdf"), height = 4, width = 4)
+  
+  plot(state_plot)
+  
+  dev.off()
+  
+  pdf(paste0("./results/state_structure/Endo_ct/endocapillary_slides/", slide_id,
+             "_cm_allslide.pdf"), height = 4, width = 4)
+  
+  plot(cm_plot)
+  
+  dev.off()
+  
+  pdf(paste0("./results/state_structure/Endo_ct/endocapillary_slides/", slide_id,
+             "_pc_allslide.pdf"), height = 4, width = 4)
+  
+  plot(pc_plot)
+  
+  dev.off()
+  
+})
 
 
 

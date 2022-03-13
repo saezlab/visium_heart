@@ -34,20 +34,7 @@ run_state_ppline_ct(ROI_ct = "Myeloid",
                     target_assay = "cell_states")
 
 misty_out_folder <- "./results/state_structure/Myeloid_ct/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
-
-run_state_ppline_ct(ROI_ct = "Myeloid",
-                    ROI_prop = 0.1,
-                    mask_by_prop = F,
-                    mask_threshold = 0.1,
-                    folder_label = "Myeloid_ct_ms",
-                    targets =  target_list,
-                    target_assay = "cell_states_pos",
-                    state_origin = "cell_states_ms")
-
-misty_out_folder <- "./results/state_structure/Myeloid_ct_ms/"
-performance_all_misty(misty_out_folder, r2_filter = 0.1)
-
+performance_all_misty(misty_out_folder, r2_filter = 25)
 
 # run_state_ppline_ct(ROI_ct = "Myeloid",
 #                     ROI_prop = 0.1,
