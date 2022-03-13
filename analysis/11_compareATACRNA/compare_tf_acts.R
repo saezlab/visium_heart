@@ -253,7 +253,7 @@ all_mods <- hint_res %>%
   dplyr::filter(!is.na(expr))
 
 ct_correlation_all <- all_mods %>%
-  dplyr::filter(source %in% unique(tf_correlation$source)) %>%
+  #dplyr::filter(source %in% unique(tf_correlation$source)) %>%
   group_by(condition) %>%
   nest() %>%
   mutate(hint_regulon_cor = map(data, function(dat) {
