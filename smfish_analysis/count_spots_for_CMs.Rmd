@@ -1,0 +1,99 @@
+---
+title: "Count spots from RNAScope for quantification of NPPB"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this analysis, we will use the spot counts from [RS-FISH](https://github.com/PreibischLab/RS-FISH) to quantify the expression of TNNT2, 
+
+```{r,include=FALSE}
+## Load libraries
+library(tidyverse)
+library(data.table)
+```
+
+
+# Read in spot count data and reformat
+
+```{r, echo = FALSE, message=  FALSE,include=FALSE}
+all_res <- data.frame()
+csv_dir <- "./rs_fish_out/"
+for(this_file in list.files(csv_dir)){
+  print(this_file)
+  channel <- str_split(this_file,pattern="\\.")[[1]][2]
+  this_csv <- fread(paste(csv_dir,this_file,sep="/"))
+  this_csv$channel <- channel
+  this_csv$filename <- this_file
+  all_res <- rbind(all_res,this_csv)
+}
+```
+
+```{r,include=FALSE}
+all_res <- all_res %>%
+  separate(filename,into=c("image","ch","ending"), sep = "\\.", remove = FALSE) %>%
+  separate("image",into= c("n1","n2","n3","n4"), sep = "-",remove = FALSE) %>%
+  mutate("sample" = if_else(is.na(n4),
+                            paste(n1,n2,sep="-"),
+                            paste(n1,n2,n3,sep="-"))) %>%
+  mutate("group" = if_else(grepl("control",sample),"control","MI"),
+         "image_nr" = if_else(is.na(n4),n3,n4)) %>%
+  select(-c(ch,ending,n1,n2,n3,n4))
+
+## Filter out spots that fall below the 25th percentile of spot intensity per channel
+all_res_filt <- all_res %>%
+  group_by(channel) %>%
+  filter(intensity > quantile(all_res$intensity, 0.25)) %>%
+  subset(intensity > 600) %>%
+  ungroup()
+```
+
+
+```{r}
+## Calculate some stats and plot detections
+spots_per_sample <- all_res_filt %>%
+  group_by(sample,image_nr,group,channel) %>%
+  tally() %>%
+  arrange(desc(n)) %>%
+  mutate("image" = paste(sample,image_nr,sep="-"))
+
+spots_per_sample$channel <- gsub("ch_1","channel1_TNNT2",spots_per_sample$channel)
+spots_per_sample$channel <- gsub("ch_2","channel2_ANKDR1",spots_per_sample$channel)
+spots_per_sample$channel <- gsub("ch_3","channel3_NPPB",spots_per_sample$channel)
+
+## Reformat column name
+spots_per_sample <- spots_per_sample %>%
+  mutate("n_spots" = n) %>%
+  select(-n) %>%
+  subset(channel != "ch_0")
+```
+
+# Format final table
+
+```{r}
+## Transform long table to wide one with each channel being one column
+spots_per_sample_wide <- spots_per_sample %>%
+  pivot_wider(names_from = channel,
+              values_from = n_spots)
+
+spots_per_sample_wide[is.na(spots_per_sample_wide)] <- 0
+
+colnames(spots_per_sample_wide) <- gsub("channel1_TNNT2","TNNT2",colnames(spots_per_sample_wide))
+colnames(spots_per_sample_wide) <- gsub("channel2_ANKDR1","ANKRD1",colnames(spots_per_sample_wide))
+colnames(spots_per_sample_wide) <- gsub("channel3_NPPB","NPPB",colnames(spots_per_sample_wide))
+
+## normalize spot counts to TNNT2 signal
+spots_per_sample_wide_normalized <- spots_per_sample_wide %>%
+  mutate("ANKRD1_normalized"= ANKRD1 / TNNT2,
+         "NPPB_normalized"= NPPB / TNNT2)
+
+## Final table containing spot counts, intensity and nuclei counts
+write.table(spots_per_sample_wide_normalized,
+            file = "./rnascope.cardiomycoyte_spots_normalized.tsv",
+            sep= "\t",
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = FALSE)
+```

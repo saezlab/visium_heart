@@ -1,0 +1,199 @@
+---
+title: "Assign RANSCOPE spot counts to nuclei for classifying macrophage subpopulations"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## Load required packages
+library(data.table)
+library(tidyverse)
+library(factoextra)
+```
+
+# Process spot count data
+
+## Read in data
+
+```{r}
+## Read in all files with information about nuclear positions
+nuclei_positions <- data.frame()
+csv_dir <- "./nuclei_tables/"
+for(this_file in list.files(csv_dir)){
+  print(this_file)
+  this_csv <- fread(paste(csv_dir,this_file,sep="/"))
+  this_csv$filename <- this_file
+  sample <- gsub("nuclei_params.csv","",this_file)
+  this_csv$image <- sample
+  this_csv$sample <- substr(sample,1,nchar(sample)-2)
+  nuclei_positions <- rbind(nuclei_positions,this_csv)
+}
+```
+
+```{r}
+## Read in all files with spot information
+spot_counts <- data.frame()
+csv_dir <- "./rs_fish_out/"
+for(this_file in list.files(csv_dir)){
+  print(this_file)
+  this_csv <- fread(paste(csv_dir,this_file,sep="/"))
+  this_csv$filename <- this_file
+  image <- str_split(this_file,pattern="\\.")[[1]][1]
+  this_csv$image <- image
+  this_csv$sample <- substr(image,1,nchar(image)-2)
+  channel <- str_split(this_file,pattern="\\.")[[1]][2]
+  this_csv$channel <- channel
+  spot_counts <- rbind(spot_counts,this_csv)
+}
+```
+
+## Filter out low intensity spots
+
+```{r}
+## Filter out spots that fall outside the 95% confidence interval of intensity for that channel
+spot_counts_filt <- spot_counts %>%
+  group_by(channel) %>%
+  filter(intensity > quantile(spot_counts$intensity, 0.25)) %>%
+  subset(intensity > 600) %>%
+  ungroup() ## use a fixed threshold for intensity
+```
+
+## Assign spots to nuclei
+
+```{r}
+colnames(nuclei_positions) <- gsub("-","_",colnames(nuclei_positions))
+nuclei_positions <- nuclei_positions %>%
+    mutate("group" = "nuclei")
+
+spot_counts_filt <- spot_counts_filt %>%
+  mutate("group" = "spots")
+
+full_table <- data.frame()
+  
+## For each image file, combine nuclear positions and spot counts to associate spots with closest nuclei and get a spatial expression table
+for(this_image in unique(spot_counts_filt$image)){
+  print(this_image)
+  this_sample <- subset(spot_counts_filt, image == this_image)
+  sample <- unique(this_sample$sample)
+  
+  spot_counts_sub <- subset(spot_counts_filt,image == this_image)
+  spot_counts_sub$spot_ID <- 1:nrow(spot_counts_sub)
+  
+  nuclei_positions_sub <- subset(nuclei_positions,image == this_image)
+  nuclei_positions_sub$cell_ID <- 1:nrow(nuclei_positions_sub)
+  colnames(nuclei_positions_sub) <- gsub("centroid_0","y",colnames(nuclei_positions_sub))
+  colnames(nuclei_positions_sub) <- gsub("centroid_1","x",colnames(nuclei_positions_sub))
+  
+  ## calculate distance of spots to closest nuclei, to get an idea of proximity per image
+  all_distances <- data.frame()
+  for(this_cell in unique(nuclei_positions_sub$cell_ID)){
+    posi <- subset(nuclei_positions_sub,cell_ID == this_cell)
+    spot_counts_sub <- spot_counts_sub %>%
+      mutate("distance" = sqrt(abs(posi$x - x)^2 + abs(posi$y - y)^2))
+    spot_counts_sub$nuclei_ID <- this_cell
+    spot_counts_sub$nuclei_x <- posi$x
+    spot_counts_sub$nuclei_y <- posi$y
+    spot_counts_sub$image <- this_image
+    all_distances <- rbind(all_distances,spot_counts_sub)
+  }
+    
+  ## assign each cell to closest nucleus
+  closest_nucleus <- all_distances %>%
+    group_by(spot_ID) %>%
+    top_n(-1, wt = distance)
+  
+ closest_nucleus <- closest_nucleus %>% 
+    ungroup() %>%
+    group_by(nuclei_ID,channel) %>%
+    tally()
+ colnames(closest_nucleus) <- c("cell_ID","channel","n")
+  
+  ## Merge spot counts with nuclear positions
+  final_spatial_counts <- left_join(closest_nucleus, nuclei_positions_sub, by="cell_ID")
+  final_spatial_counts <- final_spatial_counts %>%
+    select(-V1,-orientation)
+  
+  ## Make table wide
+  final_spatial_counts_wide <- final_spatial_counts %>%
+    pivot_wider(names_from = channel,
+                values_from = n)
+  
+  ## check for edge cases where there is no signal in 1 channel
+  chan_miss <- setdiff(c("ch_1","ch_2","ch_3"),unique(final_spatial_counts$channel))
+  if(length(chan_miss) == 0){
+    final_spatial_counts_wide <- final_spatial_counts_wide %>%
+      dplyr::select(cell_ID,x,y,ch_1,ch_2,ch_3,sample,image)
+  }else{
+    if(chan_miss == "ch_3"){
+      final_spatial_counts_wide$ch_3 <- 0 
+    }else if(chan_miss == "ch_1"){
+      final_spatial_counts_wide$ch_1 <- 0 
+    }else if(chan_miss == "ch_2"){
+      final_spatial_counts_wide$ch_2 <- 0 
+    }
+    
+    final_spatial_counts_wide <- final_spatial_counts_wide %>%
+      dplyr::select(cell_ID,x,y,ch_1,ch_3,sample,image)
+  }
+
+  final_spatial_counts_wide[is.na(final_spatial_counts_wide)] <- 0
+  colnames(final_spatial_counts_wide) <- gsub("ch_1","POSTN",colnames(final_spatial_counts_wide))
+  colnames(final_spatial_counts_wide) <- gsub("ch_2","CD163", colnames(final_spatial_counts_wide))
+  colnames(final_spatial_counts_wide) <- gsub("ch_3","SPP1", colnames(final_spatial_counts_wide))
+  sample_group <- subset(sample_groups_df,samples == sample)$sample_group
+  final_spatial_counts_wide$sample_group <- sample_group
+  
+  ## Combine for full table
+  full_table <- rbind(full_table,final_spatial_counts_wide)
+}
+```
+
+
+## Summarize signals per image
+
+```{r}
+## Classify cells based on threshold spot counts
+spot_threshold <- 2
+classified_cells <- full_table %>%
+  mutate("classification" = if_else(SPP1 > spot_threshold & CD163 > spot_threshold & POSTN == 0, "spp1_cd163_pos",
+                                    if_else(SPP1 > spot_threshold & CD163 == 0 & POSTN == 0,"spp1_pos",
+                                            if_else(POSTN > spot_threshold  & SPP1 == 0,"postn_pos",
+                                                    if_else(SPP1 == 0 & CD163 > spot_threshold & POSTN == 0,"cd163_pos",
+                                                    if_else(SPP1 > 0 & CD163 == 0 & POSTN > 0,"spp1_postn_pos",
+                                                      if_else(SPP1 > 0 & CD163 > 0 & POSTN > 0,"spp1_cd163_postn_pos",
+                                                          if_else(SPP1 == 0 & CD163 > 0 & POSTN == 0,"cd163_pos","other"))))))))
+
+## Count number of positive cells for different groups
+classified_cells_counts <- classified_cells %>%
+  group_by(classification,image,sample,sample_group) %>%
+  tally() %>%
+  ungroup()
+
+classified_cells_counts_long <- classified_cells_counts %>%
+  pivot_wider(names_from = classification,
+              values_from = n)
+
+classified_cells_counts_long <- classified_cells_counts_long %>%
+  mutate("spp1_cd163_norm" = spp1_cd163_pos / cd163_pos) %>% ## Normalize for total CD163 positive cell count
+  mutate("spp1_cd163_norm" = if_else(is.infinite(spp1_cd163_norm),0,spp1_cd163_norm))
+
+## Set NA to 0
+classified_cells_counts_long[is.na(classified_cells_counts_long)] <- 0
+
+## Write final table for Ricardo
+final_classy_table <- classified_cells_counts_long %>%
+  select(image,sample,sample_group,cd163_pos,postn_pos,spp1_cd163_pos,spp1_cd163_norm,spp1_pos)
+  
+colnames(final_classy_table) <- gsub("spp1_cd163_norm","SPP1_CD163_norm_to_CD163",colnames(final_classy_table))
+colnames(final_classy_table) <- gsub("cd163_pos","CD163_positive",colnames(final_classy_table))
+colnames(final_classy_table) <- gsub("postn_pos","POSTN_positive",colnames(final_classy_table))
+colnames(final_classy_table) <- gsub("spp1_CD163_positive","SPP1_CD163_double_positive",colnames(final_classy_table))
+ 
+write.table(final_classy_table,
+            file = "./macrophage_normalized_spot_counts.tsv",
+            sep= "\t",
+            col.names = TRUE,
+            row.names = FALSE,
+            quote = FALSE)
+```
