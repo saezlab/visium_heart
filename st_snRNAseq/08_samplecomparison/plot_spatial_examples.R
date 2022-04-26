@@ -40,6 +40,14 @@ plot_importance_boxes <- function(sample_importances_filt, view_sel = "intra", c
     nest() %>%
     dplyr::mutate(bplot = map(data, function(dat) {
       
+      pw_data <- compare_means(Importance ~ patient_group, 
+                               comparisons = my_comparisons, 
+                               data = dat) %>%
+        dplyr::select(group1, group2, p , p.adj)
+      
+      
+      max_val <- max(dat$Importance) + 0.05
+      
       ggplot(dat,
              aes(x = patient_group, color = patient_group, y = Importance)) +
         geom_boxplot() +
@@ -51,7 +59,11 @@ plot_importance_boxes <- function(sample_importances_filt, view_sel = "intra", c
               legend.position = "none",
               axis.text = element_text(size = 11),
               panel.border = element_rect(colour = "black", fill=NA, size=1)) +
-        stat_compare_means(comparisons = my_comparisons) + # Add pairwise comparisons p-value
+        ggpubr::stat_pvalue_manual(pw_data, label = "p.adj", 
+                                   y.position = max_val, 
+                                   step.increase = 0.1,
+                                   tip.length = 0.01,size = 3) +
+        #stat_compare_means(comparisons = my_comparisons) + # Add pairwise comparisons p-value
         ggtitle(view_sel) 
     }))
   
@@ -131,7 +143,7 @@ cm_pc <- plot_importance_boxes(sample_importances_filt = sample_importances_filt
                                view_sel = "intra",
                                cell_pair = c("CM", "PC"))
 
-pdf("./results/sample_comparison/spatial/PC_interactions/PCpred_CMtar_intra_box.pdf", height = 3.5, width = 3.5)
+pdf("./results/sample_comparison/spatial/PC_interactions/PCpred_CMtar_intra_box.pdf", height = 4.5, width = 2)
 
 plot(cm_pc$bplot[[2]])
 
@@ -229,7 +241,7 @@ vsmcs_fib <- plot_importance_boxes(sample_importances_filt = sample_importances_
                       cell_pair = c("Fib", "vSMCs"))
 
 
-pdf("./results/sample_comparison/spatial/Fib_interactions/vSMCspred_Fibtar_juxta_box.pdf", height = 3.5, width = 3.5)
+pdf("./results/sample_comparison/spatial/Fib_interactions/vSMCspred_Fibtar_juxta_box.pdf", height = 4.5, width = 2)
 
 plot(vsmcs_fib$bplot[[2]])
 
@@ -263,7 +275,7 @@ immune <- plot_importance_boxes(sample_importances_filt = sample_importances_fil
                                 view_sel = "juxta_5",
                                 cell_pair = c("Myeloid", "Lymphoid"))
 
-pdf("./results/sample_comparison/spatial/immune_interactions/Lymphpred_Myeloidtar_intra_box.pdf", height = 3.5, width = 3.5)
+pdf("./results/sample_comparison/spatial/immune_interactions/Lymphpred_Myeloidtar_intra_box.pdf", height = 4.5, width = 2)
 
 plot(immune$bplot[[1]])
 
