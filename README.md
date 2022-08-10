@@ -7,23 +7,23 @@ Cardiovascular disease is the leading cause of mortality worldwide of which myoc
 
 In this repository it is possible to access to the code used in the analysis of single nuc RNA-seq, ATAC-seq and spatial transcriptomics (Visium) of the associated manuscript.
 
-1) Integrative analyses of snRNAseq data and spatial transcriptomics are available [here](https://github.com/saezlab/visium_heart/tree/master/st_snRNAseq) \
-2) Analysis of snATACseq data is available [here](https://github.com/saezlab/visium_heart/tree/master/snATAC_seq) \
-3) Imaging analysis is available [here](https://github.com/saezlab/visium_heart/tree/master/smfish_analysis) \
+1) Integrative analyses of snRNAseq data and spatial transcriptomics are available [here](https://github.com/saezlab/visium_heart/tree/master/st_snRNAseq) 
+2) Analysis of snATACseq data is available [here](https://github.com/saezlab/visium_heart/tree/master/snATAC_seq) 
+3) Imaging analysis is available [here](https://github.com/saezlab/visium_heart/tree/master/smfish_analysis) 
 
 
 ### Availability of data
 
-**cellxgene:\**
+**cellxgene:**
 Interactive views and availability of processed and annotated atlases (RNA and ATAC) are available via [cellxgene](https://cellxgene.cziscience.com/collections/8191c283-0816-424b-9b61-c3e1d6258a77)
 
-**Human Cell Atlas:\**
+**Human Cell Atlas:**
 Aligned data of RNAseq/ATACseq/Visium after cellranger and spaceranger can be accessed through the [Human Cell Atlas Data Portal](https://data.humancellatlas.org/explore/projects/e9f36305-d857-44a3-93f0-df4e6007dc97). Note that for spatial transcriptomics, processed data of each slide is also provided as a Seurat R object with deconvolution results. SpaceRanger data of spatial transcriptomics contains a compressed *spatial* folder.\
 
-**Zenodo:\**
+**Zenodo:**
 Mirrors of data present in the Human Cell Atlas Data Portal and cellxgene are available here: [Processed](https://zenodo.org/record/6578047#.YvETW-xBx-U), [Raw Part 1](https://zenodo.org/record/6578553#.YvETq-xBx-U), [Raw Part 2](https://zenodo.org/record/6578617#.YvETyuxBx-U), and [Raw Part 3](https://zenodo.org/record/6580069#.YvET1-xBx-U)
  
-**European Genome-Phenome Archive:**\
+**European Genome-Phenome Archive:**
 EGA Accession number is [EGAS00001006330](https://ega-archive.org/studies/EGAS00001006330)
 
 ***
