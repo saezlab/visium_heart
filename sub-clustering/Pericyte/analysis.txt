@@ -1,0 +1,2 @@
+[NbConvertApp] Converting notebook ./01_integrate_snRNA.ipynb to html
+slurmstepd: error: *** JOB 20855 ON compute-node004 CANCELLED AT 2021-12-07T10:12:56 ***

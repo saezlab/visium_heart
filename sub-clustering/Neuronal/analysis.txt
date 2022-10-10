@@ -1,0 +1,2 @@
+[NbConvertApp] Converting notebook ./06_cleaning.ipynb to html
+[NbConvertApp] Writing 3463020 bytes to ../viz/06_cleaning.html

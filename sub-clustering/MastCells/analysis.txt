@@ -1,0 +1,4 @@
+[NbConvertApp] Converting notebook ./06_annotation.ipynb to html
+[NbConvertApp] Writing 2495322 bytes to ../viz/06_annotation.html
+[NbConvertApp] Converting notebook ./07_map_annotatiton_to_spatial.ipynb to html
+[NbConvertApp] Writing 620010 bytes to ../viz/07_map_annotatiton_to_spatial.html

@@ -1,0 +1,2 @@
+[NbConvertApp] Converting notebook ./21_viz_TFs.ipynb to html
+[NbConvertApp] Writing 3691331 bytes to ../viz/21_viz_TFs.html
