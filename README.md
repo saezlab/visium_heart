@@ -22,7 +22,10 @@ Aligned data of RNAseq/ATACseq/Visium after cellranger and spaceranger can be ac
 
 **Zenodo:**
 Mirrors of data present in the Human Cell Atlas Data Portal and cellxgene are available here: [Processed](https://zenodo.org/record/6578047#.YvETW-xBx-U), [Raw Part 1](https://zenodo.org/record/6578553#.YvETq-xBx-U), [Raw Part 2](https://zenodo.org/record/6578617#.YvETyuxBx-U), and [Raw Part 3](https://zenodo.org/record/6580069#.YvET1-xBx-U)
- 
+
+**Cell-states:**
+R objects containing the cell-state descriptions in the manuscript can be downloaded from the following Zenodo link: https://zenodo.org/record/7098004#.Y0P_LC0RoeY
+
 **European Genome-Phenome Archive:**
 EGA Accession number is [EGAS00001006330](https://ega-archive.org/studies/EGAS00001006330)
 
